@@ -1,23 +1,75 @@
 # Nasty Vault Pit
 
-Private. This repository is not public.
+Formerly the vault hub. Same one-click sync — **cosmic purple / hot magenta** night-ops skin.
 
-On-demand launcher for a local Obsidian vault: X bookmarks, Grok session notes, and GitHub repo lists. Buttons run when you press them. There is no always-on watcher in this app.
+On-demand launcher for a local Obsidian vault: X bookmarks, Grok session notes, and GitHub lists. Press a button, it runs, it stops. No always-on watcher.
+
+**Currently private.**
+
+## Screenshots
 
 ![Nasty Vault Pit](screenshots/nasty-vault-pit-001.png)
 
-## Run
+---
+
+## Features
+
+Buttons in the pit:
+
+- **Full X Bookmarks Sync (X↔local)** — pull bookmarks into the vault, and push local deletes back to X
+- **Unbookmark suppressed only (local→X)** — remove on X what you already dropped locally
+- **Chat: Import Grok Sessions** — session notes into the vault
+- **Grok Project Files (attachments)** — local copies of project files into project folders
+- **GitHub: Repos + Stars** — both lists
+- **GitHub: Repos only** / **GitHub: Stars only**
+- **All (X + Chat + Files + GitHub)** — one pass of the four
+- **X _drop** / **Chat _drop** / **Both _drop** — ingest files you dropped in by hand
+- **Canvas: All Lilith Sessions Overview** — a folder map, no model call
+
+The log and the vault counts stay on screen. The title glows. The scrollbars stay hot pink without a hover.
+
+---
+
+## Requirements
+
+| Item | Notes |
+|------|--------|
+| OS | Linux |
+| Python | 3 |
+| X sync | Firefox logged into x.com, and `bird` on `PATH` (cookies are read at run time, not stored here) |
+| GitHub sync | `gh` authenticated (`gh auth status`) |
+| Optional | Obsidian Local REST API. If it is down, notes are written to the filesystem |
+| Optional | Pillow, for the glowing title. Without it the title is a plain label |
+
+---
+
+## Quick start
 
 ```bash
+git clone git@github.com:TX-220/nasty-vault-pit.git
+cd nasty-vault-pit
+
 export OBSIDIAN_VAULT=/path/to/your/vault
 python3 hub_launcher.py
 ```
 
 If this folder lives at `<vault>/Scripts`, `OBSIDIAN_VAULT` can be omitted. The default vault is the parent directory.
 
-X sync needs Firefox logged into x.com. GitHub sync needs `gh auth status`. Obsidian Local REST is optional; notes fall back to the filesystem.
+A terminal menu is also there: `./hub_launcher.sh`.
 
-## Local config (not in git)
+---
+
+## Local config
+
+These stay on your machine. They are not in git.
 
 - `config/grok_project_files.json` — copy from `config/grok_project_files.example.json` and set your own paths.
 - `hub_launcher.desktop.example` — desktop entry. Replace `/PATH/TO/nasty-vault-pit` before installing it.
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
+
+Copyright (c) 2026 TX-220 with assistance from [Grok (xAI)](https://x.ai).
