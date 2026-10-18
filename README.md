@@ -4,6 +4,8 @@ Private. This repository is not public.
 
 On-demand launcher for a local Obsidian vault: X bookmarks, Grok session notes, and GitHub repo lists. Buttons run when you press them. There is no always-on watcher in this app.
 
+![Nasty Vault Pit](screenshots/nasty-vault-pit-001.png)
+
 ## Run
 
 ```bash
