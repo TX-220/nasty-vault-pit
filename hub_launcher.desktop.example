@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Nasty Vault Pit
+Comment=On-demand X / Chat / GitHub vault sync (no background service)
+Exec=/usr/bin/python3 /PATH/TO/nasty-vault-pit/hub_launcher.py
+Path=/PATH/TO/nasty-vault-pit
+Icon=/PATH/TO/nasty-vault-pit/icons/nasty-vault-pit.png
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true
+StartupWMClass=hub_launcher.py

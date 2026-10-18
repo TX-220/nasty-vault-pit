@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.secrets/
+config/grok_project_files.json

@@ -1,0 +1,21 @@
+{
+  "_comment": "既得権サイド / 親分反対派 — import skip + unbookmark. Content-agnostic brand presence = enemy.",
+  "author_exact": [
+    "openai", "chatgpt", "anthropicai", "claudeai", "google", "googleai",
+    "deepmind", "googledeepmind", "geminiapp", "geminicli", "microsoft", "msft",
+    "github", "copilot", "sama", "gdb", "miramurati", "darioamodei",
+    "mustafasuleyman", "msdev", "azure",
+    "meta", "facebook", "instagram", "whatsapp", "threads", "zuck", "mosseri",
+    "metaai", "metaquest", "oculus", "fbnewsroom", "instagramapp",
+    "amazon", "awscloud", "aws", "jeffbezos", "amazonwebservices", "amazonscience"
+  ],
+  "author_substr": [
+    "openai", "chatgpt", "anthropic", "claudeai", "claude_",
+    "googleai", "deepmind", "geminiapp", "googledeepmind", "geminicli",
+    "microsoft", "msft", "msdev", "azure", "github", "copilot",
+    "facebook", "instagram", "whatsapp", "metaai", "metaquest",
+    "amazon", "awscloud", "jeffbezos"
+  ],
+  "brand_regex": "(?i)\\b(OpenAI|ChatGPT|Chat\\s*GPT|GPT-?[345o]|Anthropic|Claude(?:\\s*(?:Code|Opus|Sonnet|Haiku))?|Google(?:\\s*AI|\\s*DeepMind|\\s*Cloud)?|Gemini(?:\\s*[123]|[\\s-]*(?:Pro|Flash|Ultra))?|DeepMind|Bard|Microsoft|MSFT|Azure|Copilot|GitHub\\s*Copilot|Meta(?:\\s*AI|\\s*Platforms)?|Facebook|Instagram|WhatsApp|Threads(?:\\s*app)?|Zuckerberg|Zuck\\b|Oculus|Meta\\s*Quest|Llama\\s*[234]|Amazon(?:\\s*Web\\s*Services)?|\\bAWS\\b|Bezos|Jeff\\s*Bezos|Amazon\\s*(?:Prime|S3|EC2|Bedrock)|Bedrock\\b)\\b",
+  "url_regex": "(?i)(claude\\.ai|openai\\.com|chatgpt\\.com|anthropic\\.com|meta\\.com|facebook\\.com|instagram\\.com|whatsapp\\.com|amazon\\.com|aws\\.amazon\\.com)"
+}

@@ -1,0 +1,36 @@
+{
+  "_comment": "Copy to grok_project_files.json and replace the placeholder paths. Do not commit the copy.",
+  "upload_subdir": "_uploads",
+  "text_extensions": [".md", ".txt", ".markdown", ".json", ".yaml", ".yml", ".csv", ".tsv", ".toml", ".rst", ".log"],
+  "max_file_bytes": 2000000,
+  "sources": [
+    {
+      "path": "/path/to/downloads",
+      "recursive": false
+    },
+    {
+      "path": "/path/to/vault/notes",
+      "recursive": true,
+      "force_project": "Grok-Full-Fusion"
+    }
+  ],
+  "name_rules": [
+    {
+      "project": "Grok-Full-Fusion",
+      "name_contains": ["HANDOFF", "persona", "v10."]
+    },
+    {
+      "project": "TradeBot",
+      "name_contains": ["TradeBot", "MT5", "OHLCV"]
+    }
+  ],
+  "explicit_files": [
+    {
+      "path": "/path/to/a-note.md",
+      "project": "Grok-Full-Fusion"
+    }
+  ],
+  "skip_name_contains": [
+    "archive/", "node_modules", ".git/", "__pycache__", ".obsidian/"
+  ]
+}

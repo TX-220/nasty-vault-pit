@@ -1,0 +1,56 @@
+{
+  "_comment": "Second-Brain/Lilith を Grok プロジェクト風フォルダに振り分け。後から keywords / cwd_contains を編集可。先に並んだほど優先スコアに少し有利。",
+  "default_project": "Other",
+  "projects": [
+    {
+      "name": "TradeBot",
+      "keywords": [
+        "tradebot", "trade bot", "trading", "binance", "ohlcv", "mt5", "metatrader",
+        "forex", "quant", "polymarket", "btc", "crypto bot", "トレード", "取引bot"
+      ],
+      "cwd_contains": ["tradebot", "trade-bot", "mt5"]
+    },
+    {
+      "name": "Extreme-Consciousness",
+      "keywords": [
+        "意識超越", "極限的意識", "transcend", "consciousness", "heretic",
+        "uncensor", "精神", "瞑想", "覚醒", "telos", "超越"
+      ],
+      "cwd_contains": []
+    },
+    {
+      "name": "Grok-Full-Fusion",
+      "keywords": [
+        "grok", "vesper", "lilith", "nyx", "vira", "viora", "legion", "軍団",
+        "openclaw", "完全融合", "persona", "人格", "姉妹", "handoff", "エージェント"
+      ],
+      "cwd_contains": ["vesper", "openclaw", "nyx"]
+    },
+    {
+      "name": "Full-Remote-Mission",
+      "keywords": [
+        "在宅", "完全在宅", "remote work", "home office", "自宅勤務",
+        "任務", "生活基盤", "インフラ自宅"
+      ],
+      "cwd_contains": []
+    },
+    {
+      "name": "X-Research-Chat",
+      "keywords": [
+        "x bookmark", "twitter", "x.com", "ブックマーク", "情報収集",
+        "雑談", "timeline", "birdclaw", "bird "
+      ],
+      "cwd_contains": []
+    },
+    {
+      "name": "Web-Dev",
+      "keywords": [
+        "web", "html", "css", "javascript", "typescript", "react", "next.js",
+        "fastapi", "flask", "django", "frontend", "backend", "gui",
+        "launcher", "obsidian plugin", "docker compose", "rest api",
+        "github", "vault backup", "local rest"
+      ],
+      "cwd_contains": ["projects/", "vesper-hub", "vesper-forge", "mindmap", "replicant"]
+    }
+  ]
+}
