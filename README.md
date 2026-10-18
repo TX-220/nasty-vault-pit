@@ -4,7 +4,6 @@ Formerly the vault hub. Same one-click sync — **cosmic purple / hot magenta** 
 
 On-demand launcher for a local Obsidian vault: X bookmarks, Grok session notes, and GitHub lists. Press a button, it runs, it stops. No always-on watcher.
 
-**Currently private.**
 
 ## Screenshots
 
