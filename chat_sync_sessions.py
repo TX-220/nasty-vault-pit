@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from classify_lib import classify_chat_project, safe_dir_name
-from redact_lib import REDACTION_RULES_VERSION, exclusion_reason, redact_bytes
+from redact_lib import REDACTION_RULES_VERSION, is_text, redact_bytes
 from vault_lib import LILITH_FOLDER, VAULT, sanitize_filename, stamp_full, write_note
 
 GROK = Path.home() / ".grok" / "sessions"
@@ -305,7 +305,7 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
     dest_root = (VAULT / FOLDER / PROJECTS_ROOT).resolve(strict=False)
     grok_root = GROK.resolve()
     tag = "DRY " if dry_run else ""
-    copied = unchanged = deleted = sessions = excluded = errors = redacted_files = purged = 0
+    copied = unchanged = deleted = sessions = binary = errors = redacted_files = 0
     redacted_totals: Counter = Counter()
     seen: set[Path] = set()
     for sid, summary_path, data in iter_sessions(days):
@@ -321,29 +321,27 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
             continue
         sessions += 1
         wanted: set[str] = set()
-        blocked: set[str] = set()
         for src in _iter_session_files(session_dir, grok_root):
             rp = src.relative_to(session_dir)
             dst = (target / rp).resolve(strict=False)
             if not _within(dst, target):
                 continue
             rel_s = f"{rel.as_posix()}/{rp.as_posix()}"
-            # Redaction is always on: raw bytes never reach the vault (fail closed).
-            try:
-                raw = src.read_bytes()
-                reason = exclusion_reason(rp.as_posix(), raw)
-                if reason:
-                    print(f"EXCLUDE {rel_s} ({reason})")
-                    excluded += 1
-                    blocked.add(rp.as_posix())
-                    continue
-                out, counts = redact_bytes(raw)
-                del raw
-            except Exception as exc:  # noqa: BLE001 - never fall back to a raw copy
-                print(f"ERROR redaction failed, skipped {rel_s} ({type(exc).__name__})")
-                errors += 1
-                blocked.add(rp.as_posix())
-                continue
+            # Full copy has priority: every file is mirrored. UTF-8 text gets
+            # defense-in-depth redaction; binary/non-UTF-8 is copied byte-for-byte;
+            # if redaction raises, the file is copied raw and counted.
+            raw = src.read_bytes()
+            counts: Counter = Counter()
+            if is_text(raw):
+                try:
+                    out, counts = redact_bytes(raw)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"WARN redaction failed, copied raw {rel_s} ({type(exc).__name__})")
+                    errors += 1
+                    out = raw
+            else:
+                binary += 1
+                out = raw
             wanted.add(rp.as_posix())
             redacted_totals.update(counts)
             if counts:
@@ -368,16 +366,6 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
                 prev_rules = mdata.get("redaction_rules")
             except (json.JSONDecodeError, OSError, AttributeError):
                 previous = set()
-        # Files this mirror wrote earlier that are now excluded/failed are purged
-        # (independent of --mirror-delete) so no pre-redaction copy lingers.
-        for bad in sorted(previous & blocked):
-            victim = (target / bad).resolve(strict=False)
-            if _within(victim, target) and victim.is_file():
-                print(f"{tag}PURGE {safe_dir_name(project)}/{MIRROR_SUBDIR}/{rel.as_posix()}/{bad}")
-                purged += 1
-                if not dry_run:
-                    victim.unlink()
-        previous -= blocked
         if delete:
             # Only files this mirror previously wrote (listed in its manifest).
             for stale in sorted(previous - wanted):
@@ -401,7 +389,7 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
             )
     print(
         f"SUMMARY kind=chat_mirror sessions={sessions} copied={copied} "
-        f"unchanged={unchanged} deleted={deleted} excluded={excluded} errors={errors} purged={purged} dry_run={int(dry_run)}"
+        f"unchanged={unchanged} deleted={deleted} binary_raw={binary} redaction_errors_copied_raw={errors} dry_run={int(dry_run)}"
     )
     by_type = ",".join(f"{k}={v}" for k, v in sorted(redacted_totals.items())) or "none"
     print(f"REDACTION rules={REDACTION_RULES_VERSION} files_redacted={redacted_files} by_type={by_type}")

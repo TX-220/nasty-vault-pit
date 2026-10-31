@@ -82,12 +82,16 @@ to `Lilith/Projects/<project>/Sessions/<original relative path>/`, using the sam
 Unchanged files are skipped, symlinks are not followed, and nothing is written outside `Lilith/Projects/`.
 `--mirror-delete` removes only files the mirror itself copied earlier (tracked in `.mirror_manifest.json`); without it, nothing is deleted.
 
-**Secret redaction is always on in mirror mode** (rules version `2026-10-31.1`, see `redact_lib.py`). Every file is redacted in memory before it is written
-(atomic write, mtime kept): AWS / GitHub / OpenAI / Anthropic / xAI / Slack / Google / Stripe keys, JWTs, PEM private keys, `Bearer` tokens,
-URL credentials, and `password|secret|token|api_key|auth|cookie|session_id…` key/value pairs become `[REDACTED:<type>]`.
-Binary or non-UTF-8 files and sensitive names (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `*.pfx`) are never copied.
-If redaction fails for a file, it is skipped (fail closed). Output shows only paths and counts per type; add `--redaction-report` for per-file counts.
-Regex redaction is best effort: unknown secret formats can still slip through.
+**Full copy first.** Every file in each session directory is mirrored, including binary, non-UTF-8 and sensitive-named files (`.env`, `*.pem`, ...).
+As defense in depth, UTF-8 text gets a light redaction pass (rules version `2026-10-31.2`, see `redact_lib.py`): obvious API keys/tokens
+(AWS, GitHub, OpenAI, Anthropic, xAI, Slack, Google, Stripe, Hugging Face, GitLab, npm, Telegram/Discord bot), JWTs, PEM private keys,
+`Bearer` tokens, URL credentials and exact secret key names (`password`, `api_key`, `token`, `secret`, `cookie`, ...) become `[REDACTED:<type>]`.
+Normal fields like `author` or `num_tokens` are left alone. Binary/non-UTF-8 files are copied byte for byte; if redaction fails on a file it is copied raw
+and counted in the summary (`redaction_errors_copied_raw=`). Writes are atomic and keep mtimes. Output shows paths and counts only, never values;
+`--redaction-report` adds per-file counts.
+
+> **The vault is local and private.** Mirrored sessions can still contain secrets that the regex pass misses (and raw copies of binary files).
+> Never publish, share, or push the vault, or `Lilith/Projects/*/Sessions/`, to any public place.
 
 ---
 
