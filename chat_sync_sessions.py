@@ -24,11 +24,13 @@ import json
 import os
 import shutil
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from classify_lib import classify_chat_project, safe_dir_name
+from redact_lib import REDACTION_RULES_VERSION, exclusion_reason, redact_bytes
 from vault_lib import LILITH_FOLDER, VAULT, sanitize_filename, stamp_full, write_note
 
 GROK = Path.home() / ".grok" / "sessions"
@@ -272,22 +274,19 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
-def _same_file(src: Path, dst: Path) -> bool:
+def _write_redacted(dst: Path, data: bytes, mtime: float) -> None:
+    """Atomic write of already-redacted bytes, keeping the source mtime."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.is_symlink():
+        dst.unlink()
+    tmp = dst.with_name(f".{dst.name}.mirror-tmp")
     try:
-        a, b = src.stat(), dst.stat()
-    except OSError:
-        return False
-    if a.st_size != b.st_size:
-        return False
-    if int(a.st_mtime) == int(b.st_mtime):
-        return True
-    h1, h2 = hashlib.sha256(), hashlib.sha256()
-    with src.open("rb") as f1, dst.open("rb") as f2:
-        for chunk in iter(lambda: f1.read(1 << 20), b""):
-            h1.update(chunk)
-        for chunk in iter(lambda: f2.read(1 << 20), b""):
-            h2.update(chunk)
-    return h1.digest() == h2.digest()
+        tmp.write_bytes(data)
+        os.utime(tmp, (mtime, mtime))
+        os.replace(tmp, dst)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def _iter_session_files(session_dir: Path, grok_root: Path):
@@ -302,11 +301,12 @@ def _iter_session_files(session_dir: Path, grok_root: Path):
             yield f
 
 
-def mirror_sessions(days: int | None, dry_run: bool, delete: bool) -> None:
+def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool = False) -> None:
     dest_root = (VAULT / FOLDER / PROJECTS_ROOT).resolve(strict=False)
     grok_root = GROK.resolve()
     tag = "DRY " if dry_run else ""
-    copied = unchanged = deleted = sessions = 0
+    copied = unchanged = deleted = sessions = excluded = errors = redacted_files = purged = 0
+    redacted_totals: Counter = Counter()
     seen: set[Path] = set()
     for sid, summary_path, data in iter_sessions(days):
         session_dir = summary_path.parent
@@ -321,29 +321,63 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool) -> None:
             continue
         sessions += 1
         wanted: set[str] = set()
+        blocked: set[str] = set()
         for src in _iter_session_files(session_dir, grok_root):
             rp = src.relative_to(session_dir)
             dst = (target / rp).resolve(strict=False)
             if not _within(dst, target):
                 continue
+            rel_s = f"{rel.as_posix()}/{rp.as_posix()}"
+            # Redaction is always on: raw bytes never reach the vault (fail closed).
+            try:
+                raw = src.read_bytes()
+                reason = exclusion_reason(rp.as_posix(), raw)
+                if reason:
+                    print(f"EXCLUDE {rel_s} ({reason})")
+                    excluded += 1
+                    blocked.add(rp.as_posix())
+                    continue
+                out, counts = redact_bytes(raw)
+                del raw
+            except Exception as exc:  # noqa: BLE001 - never fall back to a raw copy
+                print(f"ERROR redaction failed, skipped {rel_s} ({type(exc).__name__})")
+                errors += 1
+                blocked.add(rp.as_posix())
+                continue
             wanted.add(rp.as_posix())
-            if dst.is_file() and not dst.is_symlink() and _same_file(src, dst):
+            redacted_totals.update(counts)
+            if counts:
+                redacted_files += 1
+                detail = ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
+                if report:
+                    print(f"REDACT {rel_s} {detail}")
+            if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == out:
                 unchanged += 1
                 continue
-            print(f"{tag}COPY {rel.as_posix()}/{rp.as_posix()} -> {safe_dir_name(project)}/{MIRROR_SUBDIR}/")
+            print(f"{tag}COPY {rel_s} -> {safe_dir_name(project)}/{MIRROR_SUBDIR}/")
             copied += 1
             if not dry_run:
-                if dst.is_symlink():
-                    dst.unlink()
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst, follow_symlinks=False)
+                _write_redacted(dst, out, src.stat().st_mtime)
         manifest = target / MIRROR_MANIFEST
         previous: set[str] = set()
+        prev_rules = None
         if manifest.is_file():
             try:
-                previous = set(json.loads(manifest.read_text(encoding="utf-8")).get("files") or [])
-            except (json.JSONDecodeError, OSError):
+                mdata = json.loads(manifest.read_text(encoding="utf-8"))
+                previous = set(mdata.get("files") or [])
+                prev_rules = mdata.get("redaction_rules")
+            except (json.JSONDecodeError, OSError, AttributeError):
                 previous = set()
+        # Files this mirror wrote earlier that are now excluded/failed are purged
+        # (independent of --mirror-delete) so no pre-redaction copy lingers.
+        for bad in sorted(previous & blocked):
+            victim = (target / bad).resolve(strict=False)
+            if _within(victim, target) and victim.is_file():
+                print(f"{tag}PURGE {safe_dir_name(project)}/{MIRROR_SUBDIR}/{rel.as_posix()}/{bad}")
+                purged += 1
+                if not dry_run:
+                    victim.unlink()
+        previous -= blocked
         if delete:
             # Only files this mirror previously wrote (listed in its manifest).
             for stale in sorted(previous - wanted):
@@ -357,17 +391,20 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool) -> None:
             keep = wanted
         else:
             keep = wanted | {p for p in previous if (target / p).is_file()}
-        if not dry_run and (keep != previous or not manifest.is_file()):
+        if not dry_run and (keep != previous or not manifest.is_file() or prev_rules != REDACTION_RULES_VERSION):
             target.mkdir(parents=True, exist_ok=True)
             manifest.write_text(
-                json.dumps({"session_id": sid, "source": rel.as_posix(), "files": sorted(keep)},
+                json.dumps({"session_id": sid, "source": rel.as_posix(),
+                            "redaction_rules": REDACTION_RULES_VERSION, "files": sorted(keep)},
                            ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
     print(
         f"SUMMARY kind=chat_mirror sessions={sessions} copied={copied} "
-        f"unchanged={unchanged} deleted={deleted} dry_run={int(dry_run)}"
+        f"unchanged={unchanged} deleted={deleted} excluded={excluded} errors={errors} purged={purged} dry_run={int(dry_run)}"
     )
+    by_type = ",".join(f"{k}={v}" for k, v in sorted(redacted_totals.items())) or "none"
+    print(f"REDACTION rules={REDACTION_RULES_VERSION} files_redacted={redacted_files} by_type={by_type}")
 
 
 def main() -> None:
@@ -382,16 +419,18 @@ def main() -> None:
     ap.add_argument("--mirror-delete", action="store_true",
                     help="With --full-mirror: remove mirrored files no longer in the source "
                          "(only files listed in the mirror's own manifest)")
+    ap.add_argument("--redaction-report", action="store_true",
+                    help="With --full-mirror: list per-file redaction counts (never values)")
     args = ap.parse_args()
 
-    if (args.dry_run or args.mirror_delete) and not args.full_mirror:
-        ap.error("--dry-run / --mirror-delete require --full-mirror")
+    if (args.dry_run or args.mirror_delete or args.redaction_report) and not args.full_mirror:
+        ap.error("--dry-run / --mirror-delete / --redaction-report require --full-mirror")
     if args.full_mirror:
         if args.reorganize:
             ap.error("--full-mirror cannot be combined with --reorganize")
         if not GROK.is_dir():
             sys.exit(f"No grok sessions dir: {GROK}")
-        mirror_sessions(args.days, args.dry_run, args.mirror_delete)
+        mirror_sessions(args.days, args.dry_run, args.mirror_delete, args.redaction_report)
         return
 
     (VAULT / FOLDER / PROJECTS_ROOT).mkdir(parents=True, exist_ok=True)

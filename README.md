@@ -82,6 +82,13 @@ to `Lilith/Projects/<project>/Sessions/<original relative path>/`, using the sam
 Unchanged files are skipped, symlinks are not followed, and nothing is written outside `Lilith/Projects/`.
 `--mirror-delete` removes only files the mirror itself copied earlier (tracked in `.mirror_manifest.json`); without it, nothing is deleted.
 
+**Secret redaction is always on in mirror mode** (rules version `2026-10-31.1`, see `redact_lib.py`). Every file is redacted in memory before it is written
+(atomic write, mtime kept): AWS / GitHub / OpenAI / Anthropic / xAI / Slack / Google / Stripe keys, JWTs, PEM private keys, `Bearer` tokens,
+URL credentials, and `password|secret|token|api_key|auth|cookie|session_id…` key/value pairs become `[REDACTED:<type>]`.
+Binary or non-UTF-8 files and sensitive names (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `*.p12`, `*.pfx`) are never copied.
+If redaction fails for a file, it is skipped (fail closed). Output shows only paths and counts per type; add `--redaction-report` for per-file counts.
+Regex redaction is best effort: unknown secret formats can still slip through.
+
 ---
 
 ## License
