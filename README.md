@@ -67,6 +67,23 @@ These stay on your machine. They are not in git.
 
 ---
 
+## Chat: full session mirror (opt-in)
+
+Default `chat_sync_sessions.py` still writes highlight notes only. To also keep the raw sessions:
+
+```bash
+python3 chat_sync_sessions.py --full-mirror --dry-run      # preview, writes nothing
+python3 chat_sync_sessions.py --full-mirror                # copy
+python3 chat_sync_sessions.py --full-mirror --mirror-delete  # also prune removed files
+```
+
+Each session directory under `~/.grok/sessions` (`chat_history.jsonl`, `summary.json`, and anything else in it) is copied
+to `Lilith/Projects/<project>/Sessions/<original relative path>/`, using the same project classification as the highlights.
+Unchanged files are skipped, symlinks are not followed, and nothing is written outside `Lilith/Projects/`.
+`--mirror-delete` removes only files the mirror itself copied earlier (tracked in `.mirror_manifest.json`); without it, nothing is deleted.
+
+---
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
