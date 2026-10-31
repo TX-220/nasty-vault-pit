@@ -8,6 +8,8 @@ Usage:
   python3 chat_sync_sessions.py
   python3 chat_sync_sessions.py --limit 20 --force
   python3 chat_sync_sessions.py --reorganize   # move flat notes into project dirs
+  python3 chat_sync_sessions.py --full-mirror --dry-run   # preview raw session mirror
+  python3 chat_sync_sessions.py --full-mirror [--mirror-delete]
 
 A user timer (~/.config/systemd/user/grok-chat-sync.timer) runs this every
 30 minutes. Sessions already imported are rewritten only when summary.json
@@ -17,14 +19,18 @@ is newer than the stored mtime, so a live session is not frozen at first sight.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import shutil
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from classify_lib import classify_chat_project, safe_dir_name
+from redact_lib import REDACTION_RULES_VERSION, is_text, redact_bytes
 from vault_lib import LILITH_FOLDER, VAULT, sanitize_filename, stamp_full, write_note
 
 GROK = Path.home() / ".grok" / "sessions"
@@ -237,13 +243,183 @@ def reorganize_flat_notes() -> int:
     return moved
 
 
+def classify_session(data: dict, chat: Path) -> tuple[str, int]:
+    """Shared project classification (highlight flow and --full-mirror)."""
+    cwd = (data.get("info") or {}).get("cwd") or data.get("git_root_dir") or ""
+    title_hint = str(data.get("generated_title") or data.get("session_summary") or "")
+    # pre-read sample for classification
+    sample = ""
+    if chat.is_file():
+        sample = chat.read_text(encoding="utf-8", errors="ignore")[:4000]
+    return classify_chat_project(
+        title=title_hint,
+        summary=str(data.get("session_summary") or ""),
+        cwd=str(cwd),
+        body_sample=sample,
+    )
+
+
+# ---------------------------------------------------------------------------
+# --full-mirror: copy raw session dirs into Projects/<project>/Sessions/<rel>/
+# ---------------------------------------------------------------------------
+MIRROR_SUBDIR = "Sessions"
+MIRROR_MANIFEST = ".mirror_manifest.json"
+
+
+def _within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _write_redacted(dst: Path, data: bytes, mtime: float) -> None:
+    """Atomic write of already-redacted bytes, keeping the source mtime."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.is_symlink():
+        dst.unlink()
+    tmp = dst.with_name(f".{dst.name}.mirror-tmp")
+    try:
+        tmp.write_bytes(data)
+        os.utime(tmp, (mtime, mtime))
+        os.replace(tmp, dst)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def _iter_session_files(session_dir: Path, grok_root: Path):
+    """Regular files under session_dir; never follows symlinks or leaves grok_root."""
+    for dirpath, dirnames, filenames in os.walk(session_dir, followlinks=False):
+        d = Path(dirpath)
+        dirnames[:] = sorted(n for n in dirnames if not (d / n).is_symlink())
+        for name in sorted(filenames):
+            f = d / name
+            if f.is_symlink() or not f.is_file() or not _within(f, grok_root):
+                continue
+            yield f
+
+
+def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool = False) -> None:
+    dest_root = (VAULT / FOLDER / PROJECTS_ROOT).resolve(strict=False)
+    grok_root = GROK.resolve()
+    tag = "DRY " if dry_run else ""
+    copied = unchanged = deleted = sessions = binary = errors = redacted_files = 0
+    redacted_totals: Counter = Counter()
+    seen: set[Path] = set()
+    for sid, summary_path, data in iter_sessions(days):
+        session_dir = summary_path.parent
+        if session_dir in seen or summary_path.is_symlink() or not _within(session_dir, grok_root):
+            continue
+        seen.add(session_dir)
+        project, _ = classify_session(data, session_dir / "chat_history.jsonl")
+        rel = session_dir.resolve().relative_to(grok_root)
+        target = (dest_root / safe_dir_name(project) / MIRROR_SUBDIR / rel).resolve(strict=False)
+        if rel == Path(".") or not _within(target, dest_root):
+            print(f"SKIP unsafe target for session {sid}")
+            continue
+        sessions += 1
+        wanted: set[str] = set()
+        for src in _iter_session_files(session_dir, grok_root):
+            rp = src.relative_to(session_dir)
+            dst = (target / rp).resolve(strict=False)
+            if not _within(dst, target):
+                continue
+            rel_s = f"{rel.as_posix()}/{rp.as_posix()}"
+            # Full copy has priority: every file is mirrored. UTF-8 text gets
+            # defense-in-depth redaction; binary/non-UTF-8 is copied byte-for-byte;
+            # if redaction raises, the file is copied raw and counted.
+            raw = src.read_bytes()
+            counts: Counter = Counter()
+            if is_text(raw):
+                try:
+                    out, counts = redact_bytes(raw)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"WARN redaction failed, copied raw {rel_s} ({type(exc).__name__})")
+                    errors += 1
+                    out = raw
+            else:
+                binary += 1
+                out = raw
+            wanted.add(rp.as_posix())
+            redacted_totals.update(counts)
+            if counts:
+                redacted_files += 1
+                detail = ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
+                if report:
+                    print(f"REDACT {rel_s} {detail}")
+            if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == out:
+                unchanged += 1
+                continue
+            print(f"{tag}COPY {rel_s} -> {safe_dir_name(project)}/{MIRROR_SUBDIR}/")
+            copied += 1
+            if not dry_run:
+                _write_redacted(dst, out, src.stat().st_mtime)
+        manifest = target / MIRROR_MANIFEST
+        previous: set[str] = set()
+        prev_rules = None
+        if manifest.is_file():
+            try:
+                mdata = json.loads(manifest.read_text(encoding="utf-8"))
+                previous = set(mdata.get("files") or [])
+                prev_rules = mdata.get("redaction_rules")
+            except (json.JSONDecodeError, OSError, AttributeError):
+                previous = set()
+        if delete:
+            # Only files this mirror previously wrote (listed in its manifest).
+            for stale in sorted(previous - wanted):
+                victim = (target / stale).resolve(strict=False)
+                if not _within(victim, target) or not victim.is_file():
+                    continue
+                print(f"{tag}DELETE {safe_dir_name(project)}/{MIRROR_SUBDIR}/{rel.as_posix()}/{stale}")
+                deleted += 1
+                if not dry_run:
+                    victim.unlink()
+            keep = wanted
+        else:
+            keep = wanted | {p for p in previous if (target / p).is_file()}
+        if not dry_run and (keep != previous or not manifest.is_file() or prev_rules != REDACTION_RULES_VERSION):
+            target.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(
+                json.dumps({"session_id": sid, "source": rel.as_posix(),
+                            "redaction_rules": REDACTION_RULES_VERSION, "files": sorted(keep)},
+                           ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+    print(
+        f"SUMMARY kind=chat_mirror sessions={sessions} copied={copied} "
+        f"unchanged={unchanged} deleted={deleted} binary_raw={binary} redaction_errors_copied_raw={errors} dry_run={int(dry_run)}"
+    )
+    by_type = ",".join(f"{k}={v}" for k, v in sorted(redacted_totals.items())) or "none"
+    print(f"REDACTION rules={REDACTION_RULES_VERSION} files_redacted={redacted_files} by_type={by_type}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=15)
     ap.add_argument("--days", type=int, default=None)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--reorganize", action="store_true", help="Only reorganize flat notes")
+    ap.add_argument("--full-mirror", action="store_true",
+                    help="Copy raw session dirs into Projects/<project>/Sessions/ (no highlights)")
+    ap.add_argument("--dry-run", action="store_true", help="With --full-mirror: print actions, write nothing")
+    ap.add_argument("--mirror-delete", action="store_true",
+                    help="With --full-mirror: remove mirrored files no longer in the source "
+                         "(only files listed in the mirror's own manifest)")
+    ap.add_argument("--redaction-report", action="store_true",
+                    help="With --full-mirror: list per-file redaction counts (never values)")
     args = ap.parse_args()
+
+    if (args.dry_run or args.mirror_delete or args.redaction_report) and not args.full_mirror:
+        ap.error("--dry-run / --mirror-delete / --redaction-report require --full-mirror")
+    if args.full_mirror:
+        if args.reorganize:
+            ap.error("--full-mirror cannot be combined with --reorganize")
+        if not GROK.is_dir():
+            sys.exit(f"No grok sessions dir: {GROK}")
+        mirror_sessions(args.days, args.dry_run, args.mirror_delete, args.redaction_report)
+        return
 
     (VAULT / FOLDER / PROJECTS_ROOT).mkdir(parents=True, exist_ok=True)
     index = VAULT / FOLDER / "README.md"
@@ -289,19 +465,7 @@ def main() -> None:
             skipped += 1
             continue
 
-        cwd = (data.get("info") or {}).get("cwd") or data.get("git_root_dir") or ""
-        title_hint = str(data.get("generated_title") or data.get("session_summary") or "")
-        # pre-read sample for classification
-        sample = ""
-        if chat.is_file():
-            sample = chat.read_text(encoding="utf-8", errors="ignore")[:4000]
-
-        project, score = classify_chat_project(
-            title=title_hint,
-            summary=str(data.get("session_summary") or ""),
-            cwd=str(cwd),
-            body_sample=sample,
-        )
+        project, score = classify_session(data, chat)
         ensure_project_readme(project)
 
         title, body, _ = build_highlight(sid, data, chat, project)

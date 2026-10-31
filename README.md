@@ -67,6 +67,34 @@ These stay on your machine. They are not in git.
 
 ---
 
+## Chat: full session mirror (opt-in)
+
+Default `chat_sync_sessions.py` still writes highlight notes only. To also keep the raw sessions:
+
+```bash
+python3 chat_sync_sessions.py --full-mirror --dry-run      # preview, writes nothing
+python3 chat_sync_sessions.py --full-mirror                # copy
+python3 chat_sync_sessions.py --full-mirror --mirror-delete  # also prune removed files
+```
+
+Each session directory under `~/.grok/sessions` (`chat_history.jsonl`, `summary.json`, and anything else in it) is copied
+to `Lilith/Projects/<project>/Sessions/<original relative path>/`, using the same project classification as the highlights.
+Unchanged files are skipped, symlinks are not followed, and nothing is written outside `Lilith/Projects/`.
+`--mirror-delete` removes only files the mirror itself copied earlier (tracked in `.mirror_manifest.json`); without it, nothing is deleted.
+
+**Full copy first.** Every file in each session directory is mirrored, including binary, non-UTF-8 and sensitive-named files (`.env`, `*.pem`, ...).
+As defense in depth, UTF-8 text gets a light redaction pass (rules version `2026-10-31.2`, see `redact_lib.py`): obvious API keys/tokens
+(AWS, GitHub, OpenAI, Anthropic, xAI, Slack, Google, Stripe, Hugging Face, GitLab, npm, Telegram/Discord bot), JWTs, PEM private keys,
+`Bearer` tokens, URL credentials and exact secret key names (`password`, `api_key`, `token`, `secret`, `cookie`, ...) become `[REDACTED:<type>]`.
+Normal fields like `author` or `num_tokens` are left alone. Binary/non-UTF-8 files are copied byte for byte; if redaction fails on a file it is copied raw
+and counted in the summary (`redaction_errors_copied_raw=`). Writes are atomic and keep mtimes. Output shows paths and counts only, never values;
+`--redaction-report` adds per-file counts.
+
+> **The vault is local and private.** Mirrored sessions can still contain secrets that the regex pass misses (and raw copies of binary files).
+> Never publish, share, or push the vault, or `Lilith/Projects/*/Sessions/`, to any public place.
+
+---
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
