@@ -67,20 +67,24 @@ These stay on your machine. They are not in git.
 
 ---
 
-## Chat: full session mirror (opt-in)
+## Chat: highlights + full session mirror
 
-Default `chat_sync_sessions.py` still writes highlight notes only. To also keep the raw sessions:
+A normal run now writes the highlight notes (as before) **and** mirrors every raw Grok session:
 
 ```bash
-python3 chat_sync_sessions.py --full-mirror --dry-run      # preview, writes nothing
-python3 chat_sync_sessions.py --full-mirror                # copy
-python3 chat_sync_sessions.py --full-mirror --mirror-delete  # also prune removed files
+python3 chat_sync_sessions.py                    # highlights + full mirror (default)
+python3 chat_sync_sessions.py --highlights-only  # old behavior, highlights only
+python3 chat_sync_sessions.py --full-mirror      # mirror only (add --dry-run to preview)
+python3 chat_sync_sessions.py --mirror-delete    # also prune files the mirror wrote earlier
 ```
 
-Each session directory under `~/.grok/sessions` (`chat_history.jsonl`, `summary.json`, and anything else in it) is copied
-to `Lilith/Projects/<project>/Sessions/<original relative path>/`, using the same project classification as the highlights.
-Unchanged files are skipped, symlinks are not followed, and nothing is written outside `Lilith/Projects/`.
-`--mirror-delete` removes only files the mirror itself copied earlier (tracked in `.mirror_manifest.json`); without it, nothing is deleted.
+Each session directory under `~/.grok/sessions` is copied to **`Second-Brain/Lilith/Sessions/<project>/<original relative path>/`**,
+a top-level folder next to `Lilith/Projects/`. The project uses the same classification as the highlights; unclassified sessions go to `Sessions/Uncategorized/`.
+The run ends with `MIRROR dest=<absolute path> source=<sessions dir> copied=N unchanged=N`, and warns if the sessions dir is missing or empty.
+Unchanged files are skipped, symlinks are not followed, nothing is written outside `Lilith/Sessions/`, and nothing is deleted without
+`--mirror-delete` (manifest-tracked files only). Run with `python3` (the script is not marked executable).
+
+Older mirror output under `Lilith/Projects/<project>/Sessions/` (from the first B-004 version) is not moved or deleted; remove it by hand if you like.
 
 **Full copy first.** Every file in each session directory is mirrored, including binary, non-UTF-8 and sensitive-named files (`.env`, `*.pem`, ...).
 As defense in depth, UTF-8 text gets a light redaction pass (rules version `2026-10-31.2`, see `redact_lib.py`): obvious API keys/tokens

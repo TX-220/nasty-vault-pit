@@ -262,7 +262,8 @@ def classify_session(data: dict, chat: Path) -> tuple[str, int]:
 # ---------------------------------------------------------------------------
 # --full-mirror: copy raw session dirs into Projects/<project>/Sessions/<rel>/
 # ---------------------------------------------------------------------------
-MIRROR_SUBDIR = "Sessions"
+MIRROR_SUBDIR = "Sessions"  # Second-Brain/Lilith/Sessions/<project>/<rel>/ (sibling of Projects)
+UNCATEGORIZED = "Uncategorized"
 MIRROR_MANIFEST = ".mirror_manifest.json"
 
 
@@ -301,8 +302,24 @@ def _iter_session_files(session_dir: Path, grok_root: Path):
             yield f
 
 
+def mirror_root() -> Path:
+    """Same Lilith root as the highlights (VAULT / LILITH_FOLDER), visible top-level Sessions/."""
+    return (VAULT / FOLDER / MIRROR_SUBDIR).resolve(strict=False)
+
+
+def warn_if_no_source() -> bool:
+    """Print a warning when the sessions source is missing or empty. True if usable."""
+    if not GROK.is_dir():
+        print(f"WARN sessions source missing: {GROK} (nothing to mirror)")
+        return False
+    if next(GROK.rglob("summary.json"), None) is None:
+        print(f"WARN sessions source empty (no summary.json under {GROK}); nothing to mirror")
+        return False
+    return True
+
+
 def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool = False) -> None:
-    dest_root = (VAULT / FOLDER / PROJECTS_ROOT).resolve(strict=False)
+    dest_root = mirror_root()
     grok_root = GROK.resolve()
     tag = "DRY " if dry_run else ""
     copied = unchanged = deleted = sessions = binary = errors = redacted_files = 0
@@ -313,9 +330,10 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
         if session_dir in seen or summary_path.is_symlink() or not _within(session_dir, grok_root):
             continue
         seen.add(session_dir)
-        project, _ = classify_session(data, session_dir / "chat_history.jsonl")
+        project, score = classify_session(data, session_dir / "chat_history.jsonl")
+        bucket = safe_dir_name(project) if score > 0 else UNCATEGORIZED
         rel = session_dir.resolve().relative_to(grok_root)
-        target = (dest_root / safe_dir_name(project) / MIRROR_SUBDIR / rel).resolve(strict=False)
+        target = (dest_root / bucket / rel).resolve(strict=False)
         if rel == Path(".") or not _within(target, dest_root):
             print(f"SKIP unsafe target for session {sid}")
             continue
@@ -352,7 +370,7 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
             if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == out:
                 unchanged += 1
                 continue
-            print(f"{tag}COPY {rel_s} -> {safe_dir_name(project)}/{MIRROR_SUBDIR}/")
+            print(f"{tag}COPY {rel_s} -> {MIRROR_SUBDIR}/{bucket}/")
             copied += 1
             if not dry_run:
                 _write_redacted(dst, out, src.stat().st_mtime)
@@ -372,7 +390,7 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
                 victim = (target / stale).resolve(strict=False)
                 if not _within(victim, target) or not victim.is_file():
                     continue
-                print(f"{tag}DELETE {safe_dir_name(project)}/{MIRROR_SUBDIR}/{rel.as_posix()}/{stale}")
+                print(f"{tag}DELETE {MIRROR_SUBDIR}/{bucket}/{rel.as_posix()}/{stale}")
                 deleted += 1
                 if not dry_run:
                     victim.unlink()
@@ -393,34 +411,53 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
     )
     by_type = ",".join(f"{k}={v}" for k, v in sorted(redacted_totals.items())) or "none"
     print(f"REDACTION rules={REDACTION_RULES_VERSION} files_redacted={redacted_files} by_type={by_type}")
+    print(f"MIRROR {'(dry-run) ' if dry_run else ''}dest={dest_root} source={GROK} "
+          f"sessions={sessions} copied={copied} unchanged={unchanged}")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Default: highlight notes + full raw mirror into Lilith/Sessions/<project>/.")
     ap.add_argument("--limit", type=int, default=15)
     ap.add_argument("--days", type=int, default=None)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--reorganize", action="store_true", help="Only reorganize flat notes")
+    ap.add_argument("--highlights-only", action="store_true",
+                    help="Old behavior: highlight notes only, no mirror")
     ap.add_argument("--full-mirror", action="store_true",
-                    help="Copy raw session dirs into Projects/<project>/Sessions/ (no highlights)")
+                    help="Mirror only: copy raw session dirs into Lilith/Sessions/<project>/ (no highlights)")
     ap.add_argument("--dry-run", action="store_true", help="With --full-mirror: print actions, write nothing")
     ap.add_argument("--mirror-delete", action="store_true",
-                    help="With --full-mirror: remove mirrored files no longer in the source "
+                    help="Remove mirrored files no longer in the source "
                          "(only files listed in the mirror's own manifest)")
     ap.add_argument("--redaction-report", action="store_true",
-                    help="With --full-mirror: list per-file redaction counts (never values)")
+                    help="List per-file redaction counts (never values)")
     args = ap.parse_args()
 
-    if (args.dry_run or args.mirror_delete or args.redaction_report) and not args.full_mirror:
-        ap.error("--dry-run / --mirror-delete / --redaction-report require --full-mirror")
+    if args.highlights_only and args.full_mirror:
+        ap.error("--highlights-only and --full-mirror are mutually exclusive")
+    if args.dry_run and not args.full_mirror:
+        ap.error("--dry-run requires --full-mirror")
+    if (args.mirror_delete or args.redaction_report) and (args.highlights_only or args.reorganize):
+        ap.error("--mirror-delete / --redaction-report need the mirror (not --highlights-only / --reorganize)")
     if args.full_mirror:
         if args.reorganize:
             ap.error("--full-mirror cannot be combined with --reorganize")
-        if not GROK.is_dir():
+        if not warn_if_no_source() and not GROK.is_dir():
             sys.exit(f"No grok sessions dir: {GROK}")
         mirror_sessions(args.days, args.dry_run, args.mirror_delete, args.redaction_report)
         return
+    if args.highlights_only or args.reorganize:
+        run_highlights(args)
+        return
+    # Default: highlights exactly as before, then the full mirror.
+    has_source = warn_if_no_source()
+    run_highlights(args)
+    if has_source:
+        mirror_sessions(args.days, False, args.mirror_delete, args.redaction_report)
 
+
+def run_highlights(args: argparse.Namespace) -> None:
     (VAULT / FOLDER / PROJECTS_ROOT).mkdir(parents=True, exist_ok=True)
     index = VAULT / FOLDER / "README.md"
     if not index.is_file() or "Projects/" not in index.read_text(encoding="utf-8", errors="ignore"):
