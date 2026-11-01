@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to grok_project_files.json and replace the placeholder paths. Do not commit the copy. Keyword names such as Grok-Full-Fusion are reference buckets under Lilith/Materials/, not project folders. TradeBot is stored as Trade Bot. Sources that already live inside the vault are skipped.",
+  "_comment": "Copy to grok_project_files.json and replace the placeholder paths. Do not commit the copy. Keyword names such as Grok-Full-Fusion are reference buckets under Lilith/Materials/, not project folders. Sources that already live inside the vault are skipped.",
   "upload_subdir": "_uploads",
   "text_extensions": [".md", ".txt", ".markdown", ".json", ".yaml", ".yml", ".csv", ".tsv", ".toml", ".rst", ".log"],
   "max_file_bytes": 2000000,
@@ -20,8 +20,8 @@
       "name_contains": ["HANDOFF", "persona", "v10."]
     },
     {
-      "project": "TradeBot",
-      "name_contains": ["TradeBot", "MT5", "OHLCV"]
+      "project": "Trading",
+      "name_contains": ["Trading", "OHLCV"]
     }
   ],
   "explicit_files": [

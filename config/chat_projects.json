@@ -1,56 +1,113 @@
 {
-  "_comment": "Second-Brain/Lilith を Grok プロジェクト風フォルダに振り分け。後から keywords / cwd_contains を編集可。先に並んだほど優先スコアに少し有利。",
+  "_comment": "Generic example routing for Second-Brain/Lilith project folders. Put your own rules in config/chat_projects.local.json (gitignored); it overrides this file. Earlier entries win ties.",
   "default_project": "Other",
   "projects": [
     {
-      "name": "TradeBot",
+      "name": "Trading",
       "keywords": [
-        "tradebot", "trade bot", "trading", "binance", "ohlcv", "mt5", "metatrader",
-        "forex", "quant", "polymarket", "btc", "crypto bot", "トレード", "取引bot"
+        "trading",
+        "trade bot",
+        "ohlcv",
+        "forex",
+        "quant",
+        "backtest",
+        "crypto bot",
+        "トレード"
       ],
-      "cwd_contains": ["tradebot", "trade-bot", "mt5"]
+      "cwd_contains": [
+        "trading"
+      ]
     },
     {
       "name": "Extreme-Consciousness",
       "keywords": [
-        "意識超越", "極限的意識", "transcend", "consciousness", "heretic",
-        "uncensor", "精神", "瞑想", "覚醒", "telos", "超越"
+        "意識超越",
+        "極限的意識",
+        "transcend",
+        "consciousness",
+        "heretic",
+        "uncensor",
+        "精神",
+        "瞑想",
+        "覚醒",
+        "telos",
+        "超越"
       ],
       "cwd_contains": []
     },
     {
       "name": "Grok-Full-Fusion",
       "keywords": [
-        "grok", "vesper", "lilith", "nyx", "vira", "viora", "legion", "軍団",
-        "openclaw", "完全融合", "persona", "人格", "姉妹", "handoff", "エージェント"
+        "grok",
+        "openclaw",
+        "persona",
+        "人格",
+        "handoff",
+        "agent",
+        "エージェント"
       ],
-      "cwd_contains": ["vesper", "openclaw", "nyx"]
+      "cwd_contains": [
+        "openclaw",
+        "agents"
+      ]
     },
     {
       "name": "Full-Remote-Mission",
       "keywords": [
-        "在宅", "完全在宅", "remote work", "home office", "自宅勤務",
-        "任務", "生活基盤", "インフラ自宅"
+        "在宅",
+        "完全在宅",
+        "remote work",
+        "home office",
+        "自宅勤務",
+        "任務",
+        "生活基盤",
+        "インフラ自宅"
       ],
       "cwd_contains": []
     },
     {
       "name": "X-Research-Chat",
       "keywords": [
-        "x bookmark", "twitter", "x.com", "ブックマーク", "情報収集",
-        "雑談", "timeline", "birdclaw", "bird "
+        "x bookmark",
+        "twitter",
+        "x.com",
+        "ブックマーク",
+        "情報収集",
+        "雑談",
+        "timeline",
+        "birdclaw",
+        "bird "
       ],
       "cwd_contains": []
     },
     {
       "name": "Web-Dev",
       "keywords": [
-        "web", "html", "css", "javascript", "typescript", "react", "next.js",
-        "fastapi", "flask", "django", "frontend", "backend", "gui",
-        "launcher", "obsidian plugin", "docker compose", "rest api",
-        "github", "vault backup", "local rest"
+        "web",
+        "html",
+        "css",
+        "javascript",
+        "typescript",
+        "react",
+        "next.js",
+        "fastapi",
+        "flask",
+        "django",
+        "frontend",
+        "backend",
+        "gui",
+        "launcher",
+        "obsidian plugin",
+        "docker compose",
+        "rest api",
+        "github",
+        "vault backup",
+        "local rest"
       ],
-      "cwd_contains": ["projects/", "vesper-hub", "vesper-forge", "mindmap", "replicant"]
+      "cwd_contains": [
+        "projects/",
+        "mindmap"
+      ]
     }
   ]
 }

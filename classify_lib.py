@@ -11,7 +11,9 @@ CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
 def _load(name: str) -> dict:
-    path = CONFIG_DIR / name
+    """Load config/<name>; a local override config/<stem>.local.json (gitignored) wins."""
+    local = CONFIG_DIR / f"{Path(name).stem}.local.json"
+    path = local if local.is_file() else CONFIG_DIR / name
     if not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -57,7 +59,7 @@ def classify_chat_project(
             if _norm(frag) in cwd_l:
                 cwd_hit += 1
         # Keywords dominate. cwd only boosts when keywords already match,
-        # so a coding cwd (vesper-hub) won't swallow TradeBot/意識 etc.
+        # so a coding cwd (a hub repo) won't swallow Trading/意識 etc.
         sc = kw * 10
         if kw > 0:
             sc += cwd_hit * 3
