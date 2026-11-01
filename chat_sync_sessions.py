@@ -20,6 +20,9 @@ Usage:
 A user timer (~/.config/systemd/user/grok-chat-sync.timer) runs this every
 30 minutes. Sessions already imported are rewritten only when summary.json
 is newer than the stored mtime, so a live session is not frozen at first sight.
+
+Full-mirror reads chat_history.jsonl and summary.json until two reads match,
+so an active or just-killed session is not truncated mid-write.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -298,6 +302,22 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
+def _stable_read_bytes(path: Path, retries: int = 6, delay: float = 0.25) -> tuple[bytes, bool]:
+    """Read until two consecutive reads match. Returns (data, is_stable)."""
+    last = None
+    for i in range(retries):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            data = b""
+        if last is not None and data == last:
+            return data, True
+        last = data
+        if i < retries - 1:
+            time.sleep(delay)
+    return last or b"", False
+
+
 def _write_redacted(dst: Path, data: bytes, mtime: float) -> None:
     """Atomic write of already-redacted bytes, keeping the source mtime."""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -501,7 +521,13 @@ def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool 
             unchanged += 1
             new_fps[key] = _fp_record(st.st_mtime_ns, st.st_size, dst_size)
             continue
-        raw = src.read_bytes()
+        is_critical = src.name in ("chat_history.jsonl", "summary.json", "chat_history.json")
+        if is_critical:
+            raw, stable = _stable_read_bytes(src)
+            if not stable:
+                print(f"LIVE {key} (snapshot may be partial — session still writing)")
+        else:
+            raw = src.read_bytes()
         counts: Counter = Counter()
         if is_text(raw):
             try:
