@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Sync Grok-project reference files into Second-Brain/Lilith/Projects/<project>/_uploads/.
+"""Sync grok.com project file libraries into Projects/<project>/Files/.
 
-Grok.com cloud project files are not exposed via a free local API, so this stage:
-  1) reads explicit_files + scanned local sources (Downloads, Documents, vault)
-  2) converts text to Markdown with provenance frontmatter
-  3) places them under the matching Lilith project folder
+The cloud library is fetched per workspace (the project it belongs to).
+Outside-vault local paths in config are still copied. Paths already inside
+the vault are not copied again, and keyword names are not project folders.
 
 Config: Scripts/config/grok_project_files.json (extend anytime).
 
@@ -19,6 +18,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +31,20 @@ CONFIG = HERE / "config" / "grok_project_files.json"
 FOLDER = LILITH_FOLDER
 PROJECTS_ROOT = "Projects"
 STATE = VAULT / FOLDER / ".uploads_sync_state.json"
+# Keyword buckets are not Lilith projects. TradeBot / Other alias onto the
+# real hub folders. The rest are reference piles under Lilith/Materials/.
+_PROJECT_ALIAS = {
+    "TradeBot": "Trade Bot",
+    "Other": "Uncategorized",
+    "その他": "Uncategorized",
+}
+_NOT_A_PROJECT = {
+    "Grok-Full-Fusion",
+    "Web-Dev",
+    "Full-Remote-Mission",
+    "Extreme-Consciousness",
+    "X-Research-Chat",
+}
 
 
 def load_config() -> dict:
@@ -159,21 +173,48 @@ def dest_name(path: Path) -> str:
     return f"{stem}.md"
 
 
-def collect_candidates(cfg: dict) -> list[tuple[Path, str]]:
-    """Return list of (path, project)."""
+def _inside_vault(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(VAULT.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def upload_rel(project: str, path: Path, cfg: dict) -> str:
+    """Changed attachments never create a fake project folder."""
+    name = dest_name(path)
+    if project in _NOT_A_PROJECT:
+        return f"{FOLDER}/Materials/{safe_dir_name(project)}/{name}"
+    folder = _PROJECT_ALIAS.get(project, project)
+    sub = cfg.get("upload_subdir") or "_uploads"
+    return f"{FOLDER}/{PROJECTS_ROOT}/{safe_dir_name(folder)}/{sub}/{name}"
+
+
+def collect_candidates(cfg: dict) -> tuple[list[tuple[Path, str]], int, int]:
+    """Return (files, missing_paths, in_vault_sources).
+
+    A source that already lives in the vault is not copied again.
+    Missing paths are counted, not printed (they are local config).
+    """
     exts = {e.lower() for e in (cfg.get("text_extensions") or [".md", ".txt"])}
     max_bytes = int(cfg.get("max_file_bytes") or 2_000_000)
     skip = list(cfg.get("skip_name_contains") or [])
     found: dict[str, tuple[Path, str]] = {}
+    missing = 0
+    in_vault = 0
 
     # explicit first (highest priority)
     for item in cfg.get("explicit_files") or []:
         p = Path(item["path"]).expanduser()
         if not p.is_file():
-            print(f"WARN missing explicit: {p}", file=sys.stderr)
+            missing += 1
+            continue
+        if _inside_vault(p):
+            in_vault += 1
             continue
         if not is_text_candidate(p, exts, max_bytes):
-            print(f"WARN skip non-text/large: {p}", file=sys.stderr)
+            missing += 1
             continue
         proj = item.get("project") or resolve_project(p, cfg, None)
         found[str(p.resolve())] = (p, proj)
@@ -181,7 +222,10 @@ def collect_candidates(cfg: dict) -> list[tuple[Path, str]]:
     for src in cfg.get("sources") or []:
         root = Path(src["path"]).expanduser()
         if not root.exists():
-            print(f"WARN missing source: {root}", file=sys.stderr)
+            missing += 1
+            continue
+        if _inside_vault(root):
+            in_vault += 1
             continue
         force = src.get("force_project")
         recursive = bool(src.get("recursive"))
@@ -218,7 +262,7 @@ def collect_candidates(cfg: dict) -> list[tuple[Path, str]]:
             if key not in found:
                 found[key] = (p, proj)
 
-    return list(found.values())
+    return list(found.values()), missing, in_vault
 
 
 def sync_one(path: Path, project: str, cfg: dict, state: dict, dry_run: bool) -> str:
@@ -226,14 +270,11 @@ def sync_one(path: Path, project: str, cfg: dict, state: dict, dry_run: bool) ->
     fp = file_fingerprint(path)
     key = str(path.resolve())
     prev = (state.get("files") or {}).get(key)
-    if prev and prev.get("fp") == fp and not dry_run:
-        dest_rel = prev.get("dest")
-        if dest_rel and (VAULT / dest_rel).is_file():
-            return "skipped"
+    if prev and prev.get("fp") == fp:
+        # Unchanged source. A missing note was removed on purpose.
+        return "skipped"
 
-    sub = cfg.get("upload_subdir") or "_uploads"
-    proj_dir = safe_dir_name(project)
-    rel = f"{FOLDER}/{PROJECTS_ROOT}/{proj_dir}/{sub}/{dest_name(path)}"
+    rel = upload_rel(project, path, cfg)
     mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
     body_core = read_as_markdown(path)
     note = (
@@ -255,8 +296,15 @@ def sync_one(path: Path, project: str, cfg: dict, state: dict, dry_run: bool) ->
     )
     if dry_run:
         print(f"DRY [{project}] {path.name} → {rel}")
-        return "added"
+        return "updated" if prev else "added"
     write_note(rel, note)
+    readme = (VAULT / rel).parent / "README.md"
+    if not readme.is_file():
+        readme.write_text(
+            f"# {project} — reference files\n\n"
+            "Local text copied by `grok_project_files_sync.py`.\n",
+            encoding="utf-8",
+        )
     state.setdefault("files", {})[key] = {
         "fp": fp,
         "dest": rel,
@@ -266,6 +314,12 @@ def sync_one(path: Path, project: str, cfg: dict, state: dict, dry_run: bool) ->
     }
     print(f"OK [{project}] {rel}")
     return "updated" if prev else "added"
+
+
+def _stable_stamp(text: str) -> str:
+    text = re.sub(r"(?m)^saved:.*$", "saved:", text)
+    text = re.sub(r"(?m)^同期:.*$", "同期:", text)
+    return text
 
 
 def write_index(by_project: dict[str, list[str]]) -> None:
@@ -283,14 +337,39 @@ def write_index(by_project: dict[str, list[str]]) -> None:
         "",
     ]
     for proj in sorted(by_project.keys()):
+        rels = [rel for rel in by_project[proj] if (VAULT / rel).is_file()]
+        if not rels:
+            continue
         lines.append(f"## {proj}")
         lines.append("")
-        for rel in sorted(by_project[proj]):
-            # wiki link style
+        for rel in sorted(rels):
             name = Path(rel).name
             lines.append(f"- [[{rel}|{name}]]")
         lines.append("")
-    write_note(f"{FOLDER}/{PROJECTS_ROOT}/Grok-Materials-Index.md", "\n".join(lines) + "\n")
+    body = "\n".join(lines) + "\n"
+    rel = f"{FOLDER}/{PROJECTS_ROOT}/Grok-Materials-Index.md"
+    path = VAULT / rel
+    if path.is_file():
+        try:
+            old = path.read_text(encoding="utf-8")
+        except OSError:
+            old = ""
+        if _stable_stamp(old) == _stable_stamp(body):
+            print("INDEX unchanged", flush=True)
+            return
+    write_note(rel, body)
+
+
+def sync_cloud_libraries() -> None:
+    """Pit Files / All: grok.com file library, one folder per project."""
+    script = Path(__file__).resolve().parent / "chat_sync_lilith_files.py"
+    if not script.is_file():
+        print("WARN cloud project files missing", flush=True)
+        return
+    print("=== chat_sync_lilith_files.py ===", flush=True)
+    result = subprocess.run([sys.executable, str(script)], cwd=str(script.parent))
+    if result.returncode != 0:
+        print(f"WARN cloud project files failed code={result.returncode}", flush=True)
 
 
 def main() -> None:
@@ -298,19 +377,28 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    if not args.dry_run:
+        sync_cloud_libraries()
+
     cfg = load_config()
     state = load_state()
-    candidates = collect_candidates(cfg)
+    candidates, missing, in_vault = collect_candidates(cfg)
     print(f"Candidates: {len(candidates)}", flush=True)
+    if missing:
+        print(
+            f"SKIP missing paths: {missing} (config/grok_project_files.json)",
+            file=sys.stderr,
+        )
+    if in_vault:
+        print(
+            f"SKIP in-vault sources: {in_vault} (already in the vault, not copied again)",
+            file=sys.stderr,
+        )
 
     added = updated = skipped = 0
     by_project: dict[str, list[str]] = {}
 
     for path, project in sorted(candidates, key=lambda x: (x[1], x[0].name)):
-        # ensure project dir
-        (VAULT / FOLDER / PROJECTS_ROOT / safe_dir_name(project) / (cfg.get("upload_subdir") or "_uploads")).mkdir(
-            parents=True, exist_ok=True
-        )
         status = sync_one(path, project, cfg, state, args.dry_run)
         if status == "added":
             added += 1
@@ -319,30 +407,20 @@ def main() -> None:
         else:
             skipped += 1
         dest = (state.get("files") or {}).get(str(path.resolve()), {}).get("dest")
-        if dest:
+        if dest and (VAULT / dest).is_file():
             by_project.setdefault(project, []).append(dest)
-        else:
-            # dry-run estimate
-            sub = cfg.get("upload_subdir") or "_uploads"
-            by_project.setdefault(project, []).append(
-                f"{FOLDER}/{PROJECTS_ROOT}/{safe_dir_name(project)}/{sub}/{dest_name(path)}"
-            )
+
+    for meta in (state.get("files") or {}).values():
+        dest = meta.get("dest")
+        proj = meta.get("project") or "Uncategorized"
+        if dest and (VAULT / dest).is_file():
+            bucket = by_project.setdefault(proj, [])
+            if dest not in bucket:
+                bucket.append(dest)
 
     if not args.dry_run:
         save_state(state)
         write_index(by_project)
-        # project-level README pointer
-        for proj, rels in by_project.items():
-            readme = VAULT / FOLDER / PROJECTS_ROOT / safe_dir_name(proj) / "_uploads" / "README.md"
-            if not readme.is_file():
-                readme.parent.mkdir(parents=True, exist_ok=True)
-                readme.write_text(
-                    f"# {proj} — アップロード資料\n\n"
-                    f"Grokプロジェクト相当の参照ファイル（テキスト化）。\n"
-                    f"同期: `Scripts/grok_project_files_sync.py`\n"
-                    f"設定: `Scripts/config/grok_project_files.json`\n",
-                    encoding="utf-8",
-                )
 
     total = added + updated
     print(
@@ -351,7 +429,7 @@ def main() -> None:
     )
     print(
         f"SUMMARY kind=grok_files added={total} skipped={skipped} "
-        f"updated={updated} candidates={len(candidates)}"
+        f"candidates={len(candidates)} updated={updated}"
     )
 
 

@@ -1,4 +1,4 @@
-# Nasty Vault Pit
+# Nasty Ingest Pit
 
 Formerly the vault hub. Same one-click sync — **cosmic purple / hot magenta** night-ops skin.
 
@@ -7,7 +7,7 @@ On-demand launcher for a local Obsidian vault: X bookmarks, Grok session notes, 
 
 ## Screenshots
 
-![Nasty Vault Pit](screenshots/nasty-vault-pit-001.png)
+![Nasty Ingest Pit](screenshots/nasty-ingest-pit-001.png)
 
 ---
 
@@ -45,8 +45,8 @@ The log and the vault counts stay on screen. The title glows. The scrollbars sta
 ## Quick start
 
 ```bash
-git clone git@github.com:TX-220/nasty-vault-pit.git
-cd nasty-vault-pit
+git clone git@github.com:TX-220/nasty-ingest-pit.git
+cd nasty-ingest-pit
 
 export OBSIDIAN_VAULT=/path/to/your/vault
 python3 hub_launcher.py
@@ -63,7 +63,7 @@ A terminal menu is also there: `./hub_launcher.sh`.
 These stay on your machine. They are not in git.
 
 - `config/grok_project_files.json` — copy from `config/grok_project_files.example.json` and set your own paths.
-- `hub_launcher.desktop.example` — desktop entry. Replace `/PATH/TO/nasty-vault-pit` before installing it.
+- `hub_launcher.desktop.example` — desktop entry. Replace `/PATH/TO/nasty-ingest-pit` before installing it.
 
 ---
 
@@ -78,13 +78,17 @@ python3 chat_sync_sessions.py --full-mirror      # mirror only (add --dry-run to
 python3 chat_sync_sessions.py --mirror-delete    # also prune files the mirror wrote earlier
 ```
 
-Each session directory under `~/.grok/sessions` is copied to **`Second-Brain/Lilith/Sessions/<project>/<original relative path>/`**,
-a top-level folder next to `Lilith/Projects/`. The project uses the same classification as the highlights; unclassified sessions go to `Sessions/Uncategorized/`.
-The run ends with `MIRROR dest=<absolute path> source=<sessions dir> copied=N unchanged=N`, and warns if the sessions dir is missing or empty.
-Unchanged files are skipped, symlinks are not followed, nothing is written outside `Lilith/Sessions/`, and nothing is deleted without
-`--mirror-delete` (manifest-tracked files only). Run with `python3` (the script is not marked executable).
+Every file under `~/.grok/sessions` is copied. Each session directory goes to **`Second-Brain/Lilith/Projects/<project>/<session-id>/`**.
+`<project>` is the hub genre in `~/.grok/vesper-hub.json` (Infra & Environment, Security, Freelance, Trade Bot, Information Dominance, Game Dev, Uncategorized). It is not the keyword bucket in `chat_projects.json`.
+Files that are not inside a session (`prompt_history.jsonl`, `sandbox-events.jsonl`, `session_search.sqlite`) stay in `Lilith/Sessions/`.
+The run ends with `MIRROR dest=<absolute path> source=<sessions dir> sessions=N files=N copied=N unchanged=N`, and warns if the sessions dir is missing or empty.
+Unchanged files are skipped by source size and mtime, symlinks are not followed, nothing is written outside `Lilith/`, and nothing is deleted without
+`--mirror-delete` (manifest-tracked files only). A previous flat copy at `Lilith/Sessions/<session-id>/` is removed after the files land under `Projects/<project>/<session-id>/`. Run with `python3` (the script is not marked executable).
 
-Older mirror output under `Lilith/Projects/<project>/Sessions/` (from the first B-004 version) is not moved or deleted; remove it by hand if you like.
+The same default run also pulls Lilith's grok.com project chats (one Markdown file per conversation). It uses whichever Firefox profile is already logged into grok.com. No login is a clean skip (`added=0`), not a failed sync. A later run downloads a conversation only when its `modifyTime` changed or the note is missing.
+
+GitHub sync still asks `gh` for the current list, then rewrites `Repositories.md` / `Stars.md` only when that list changed. `added=` is how many notes were written, not how many repositories came back.
+Grok project files: the Files button pulls each grok.com project's file library into `Second-Brain/Lilith/Projects/<project>/Files/`. A later run downloads a file only when its size or modified time changed. Local paths already inside the vault are not copied again, and keyword bucket names (`Grok-Full-Fusion`, `Web-Dev`, and the rest) are not created as project folders.
 
 **Full copy first.** Every file in each session directory is mirrored, including binary, non-UTF-8 and sensitive-named files (`.env`, `*.pem`, ...).
 As defense in depth, UTF-8 text gets a light redaction pass (rules version `2026-10-31.2`, see `redact_lib.py`): obvious API keys/tokens

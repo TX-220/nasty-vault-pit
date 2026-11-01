@@ -72,7 +72,9 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.process_drop:
-        print(f"saved {process_drop()} notes")
+        n = process_drop()
+        print(f"saved {n} notes")
+        print(f"SUMMARY kind=chat_drop added={n} skipped=0")
         return
 
     body = args.body

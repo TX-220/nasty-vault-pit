@@ -216,6 +216,16 @@ def export_lilith() -> Path:
     )
     OUT_LILITH.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(canvas, ensure_ascii=False, indent=2) + "\n"
+    if OUT_LILITH.is_file():
+        try:
+            same = OUT_LILITH.read_text(encoding="utf-8") == text
+        except OSError:
+            same = False
+        if same:
+            print(f"OK unchanged path={OUT_LILITH}")
+            print(f"SUMMARY kind=lilith_canvas added=0 skipped=1 vault_notes={len(rows)}")
+            print(f"sessions={len(rows)} groups={len(groups)} nodes={len(canvas['nodes'])}")
+            return OUT_LILITH
     OUT_LILITH.write_text(text, encoding="utf-8")
     print(f"OK path={OUT_LILITH}")
     print(f"SUMMARY kind=lilith_canvas added=1 skipped=0 vault_notes={len(rows)}")

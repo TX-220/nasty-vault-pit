@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nasty Vault Pit — one-click vault sync launcher (no daemons, no background cost).
+"""Nasty Ingest Pit — one-click vault sync launcher (no daemons, no background cost).
 
 Layout (always visible at bottom):
   - vault counts + last-run summary
@@ -29,8 +29,8 @@ from vault_lib import LILITH_FOLDER, VAULT as VL_VAULT  # noqa: E402
 
 VAULT = Path(VL_VAULT)
 PYTHON = sys.executable
-APP_NAME = "Nasty Vault Pit"
-ICON_PATH = HERE / "icons" / "nasty-vault-pit.png"
+APP_NAME = "Nasty Ingest Pit"
+ICON_PATH = HERE / "icons" / "nasty-ingest-pit.png"
 
 # Cosmic / lewd night palette (Nasty Command Pit aligned)
 C = {
@@ -125,7 +125,7 @@ ACTIONS = [
     # Full X = pull X→local + push local deletes→X unbookmark (bidirectional)
     ("★ Full X Bookmarks Sync (X↔local)", ["x_sync_bookmarks.py"], "#e91e8c"),
     ("X: Unbookmark suppressed only (local→X)", ["x_sync_bookmarks.py", "--unbookmark-only"], "#9b1b5a"),
-    ("★ Chat: Import Grok Sessions", ["chat_sync_sessions.py"], "#7b4dff"),
+    ("★ Chat: Lilith grok.com + local sessions", ["chat_sync_sessions.py"], "#7b4dff"),
     ("★ Grok Project Files (attachments)", ["grok_project_files_sync.py"], "#a78bfa"),
     ("★ GitHub: Repos + Stars", ["github_sync.py"], "#5c3d7a"),
     ("GitHub: Repos only", ["github_sync.py", "--repos"], "#4a3060"),
@@ -416,7 +416,7 @@ class Launcher(tk.Tk):
     def _worker(self, label: str, args: list[str]) -> None:
         cmd = [PYTHON, str(HERE / args[0]), *args[1:]]
         timeout = 900 if any(
-            x in args[0] for x in ("x_sync", "hub_auto", "github_sync", "grok_project")
+            x in args[0] for x in ("x_sync", "hub_auto", "github_sync", "grok_project", "chat_sync")
         ) else 300
         try:
             proc = subprocess.run(

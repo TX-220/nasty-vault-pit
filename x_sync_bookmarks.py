@@ -569,9 +569,9 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    # root README
+    # root README — rewrite only when the text itself changed
     readme = VAULT / FOLDER / "README.md"
-    readme.write_text(
+    readme_body = (
         "# X_Bookmarks\n\n"
         "内容キーワードで自動分類（作者名では分けない）:\n\n"
         "- `Tech-Tools/`\n"
@@ -583,9 +583,17 @@ def main() -> None:
         "ルール編集: `Scripts/config/x_categories.json`\n"
         "再分類のみ: `python3 Scripts/x_sync_bookmarks.py --reclassify-only`\n"
         "Xから削除のみ: `python3 Scripts/x_sync_bookmarks.py --unbookmark-only`\n"
-        "双方向: Full Sync は pull + ローカル削除分を X unbookmark\n",
-        encoding="utf-8",
+        "双方向: Full Sync は pull + ローカル削除分を X unbookmark\n"
     )
+    old_readme = ""
+    if readme.is_file():
+        try:
+            old_readme = readme.read_text(encoding="utf-8")
+        except OSError:
+            old_readme = ""
+    if old_readme != readme_body:
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_text(readme_body, encoding="utf-8")
 
     if args.reclassify_only:
         n = reclassify_existing(dry_run=args.dry_run)

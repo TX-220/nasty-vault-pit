@@ -8,7 +8,7 @@ cd "$HERE"
 
 pick="${1:-}"
 if [[ -z "$pick" ]] && command -v zenity >/dev/null 2>&1; then
-  pick=$(zenity --list --title="Nasty Vault Pit" \
+  pick=$(zenity --list --title="Nasty Ingest Pit" \
     --text="X / Chat / GitHub (no always-on watch)" \
     --column="ID" --column="Action" --hide-column=1 \
     all "All (X + Chat + GitHub)" \

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -112,12 +113,33 @@ def fetch_stars() -> list[dict]:
     return items
 
 
-def write_repos_note(repos: list[dict]) -> Path:
-    # Sort by updated desc
-    def key(r: dict) -> str:
-        return r.get("updatedAt") or ""
+def _stable_note(text: str) -> str:
+    """Ignore clocks. Upstream commit times are not a new repository."""
+    text = re.sub(r"(?m)^saved:.*$", "saved:", text)
+    text = re.sub(r"(?m)^取得:.*$", "取得:", text)
+    text = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", "time", text)
+    return text
 
-    repos_sorted = sorted(repos, key=key, reverse=True)
+
+def _write_if_changed(rel: str, body: str) -> bool:
+    path = VAULT / rel
+    if path.is_file():
+        try:
+            old = path.read_text(encoding="utf-8")
+        except OSError:
+            old = ""
+        if _stable_note(old) == _stable_note(body):
+            return False
+    write_note(rel, body)
+    return True
+
+
+def write_repos_note(repos: list[dict]) -> bool:
+    # Name order stays put when an upstream commit only bumps updatedAt.
+    def key(r: dict) -> str:
+        return (r.get("nameWithOwner") or r.get("name") or "").casefold()
+
+    repos_sorted = sorted(repos, key=key)
     lines = [
         "---",
         "type: github_list",
@@ -145,14 +167,14 @@ def write_repos_note(repos: list[dict]) -> Path:
 
     lines.extend(["", "## メモ", "", "- `gh` CLI（無料・ログイン済み）で取得", ""])
     body = "\n".join(lines)
-    return write_note(f"{FOLDER}/Repositories.md", body)
+    return _write_if_changed(f"{FOLDER}/Repositories.md", body)
 
 
-def write_stars_note(stars: list[dict]) -> Path:
+def write_stars_note(stars: list[dict]) -> bool:
     def key(r: dict) -> str:
-        return r.get("updated_at") or r.get("updatedAt") or ""
+        return (r.get("full_name") or r.get("nameWithOwner") or "").casefold()
 
-    stars_sorted = sorted(stars, key=key, reverse=True)
+    stars_sorted = sorted(stars, key=key)
     lines = [
         "---",
         "type: github_list",
@@ -182,7 +204,7 @@ def write_stars_note(stars: list[dict]) -> Path:
 
     lines.extend(["", "## メモ", "", "- 詳細（Issue/中身）は取らない。一覧のみ。", ""])
     body = "\n".join(lines)
-    return write_note(f"{FOLDER}/Stars.md", body)
+    return _write_if_changed(f"{FOLDER}/Stars.md", body)
 
 
 def main() -> None:
@@ -200,20 +222,29 @@ def main() -> None:
 
     (VAULT / FOLDER).mkdir(parents=True, exist_ok=True)
     n_repos = n_stars = 0
+    notes_added = notes_skipped = 0
 
     if do_repos:
         print("Fetching repositories…", flush=True)
         repos = fetch_repos()
-        write_repos_note(repos)
         n_repos = len(repos)
-        print(f"OK {FOLDER}/Repositories.md  ({n_repos})", flush=True)
+        if write_repos_note(repos):
+            notes_added += 1
+            print(f"OK {FOLDER}/Repositories.md  ({n_repos}) updated", flush=True)
+        else:
+            notes_skipped += 1
+            print(f"OK {FOLDER}/Repositories.md  ({n_repos}) unchanged", flush=True)
 
     if do_stars:
         print("Fetching stars…", flush=True)
         stars = fetch_stars()
-        write_stars_note(stars)
         n_stars = len(stars)
-        print(f"OK {FOLDER}/Stars.md  ({n_stars})", flush=True)
+        if write_stars_note(stars):
+            notes_added += 1
+            print(f"OK {FOLDER}/Stars.md  ({n_stars}) updated", flush=True)
+        else:
+            notes_skipped += 1
+            print(f"OK {FOLDER}/Stars.md  ({n_stars}) unchanged", flush=True)
 
     # README once
     readme = VAULT / FOLDER / "README.md"
@@ -227,11 +258,11 @@ def main() -> None:
         )
 
     print(
-        f"DONE kind=github added={n_repos + n_stars} skipped=0 "
-        f"failed=0 vault_notes={n_repos + n_stars}"
+        f"DONE kind=github added={notes_added} skipped={notes_skipped} "
+        f"failed=0 repos={n_repos} stars={n_stars}"
     )
     print(
-        f"SUMMARY kind=github added={n_repos + n_stars} skipped=0 "
+        f"SUMMARY kind=github added={notes_added} skipped={notes_skipped} "
         f"repos={n_repos} stars={n_stars}"
     )
 

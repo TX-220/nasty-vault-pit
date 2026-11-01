@@ -216,7 +216,9 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.process_drop:
-        print(f"saved {process_drop()} notes")
+        n = process_drop()
+        print(f"saved {n} notes")
+        print(f"SUMMARY kind=x_drop added={n} skipped=0")
         return
     if args.from_firefox:
         print(f"saved {import_firefox(args.days, args.limit)} notes from Firefox history")
