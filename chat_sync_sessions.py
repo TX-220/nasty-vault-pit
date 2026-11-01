@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Pull Grok sessions into Second-Brain/Lilith/.
+"""Pull Grok sessions into Second-Brain/Lilith/Projects/<project>/ (directory layout).
 
-Highlights go to Projects/<project>/. A normal run also mirrors
-~/.grok/sessions into Projects/<project>/<session-id>/, then pulls
-Lilith's grok.com chats when Firefox is logged in.
-
-Project folders are the hub genres in ~/.grok/vesper-hub.json.
-Keyword names in Scripts/config/chat_projects.json are not folders.
-Repeat runs skip unchanged highlight notes, unchanged mirrored files
-(source size + mtime), and unchanged grok.com chats (list modifyTime).
+Projects are configurable in Scripts/config/chat_projects.json
+(keywords + cwd). Adjust anytime without code changes.
 
 Usage:
   python3 chat_sync_sessions.py
@@ -21,8 +15,8 @@ A user timer (~/.config/systemd/user/grok-chat-sync.timer) runs this every
 30 minutes. Sessions already imported are rewritten only when summary.json
 is newer than the stored mtime, so a live session is not frozen at first sight.
 
-Full-mirror reads chat_history.jsonl and summary.json until two reads match,
-so an active or just-killed session is not truncated mid-write.
+Full-mirror now takes a stable snapshot of chat_history.jsonl / summary.json
+so active or just-killed sessions are not truncated mid-write.
 """
 
 from __future__ import annotations
@@ -203,7 +197,7 @@ def build_highlight(
         f"**session:** `{sid}`  \n"
         f"**when:** {stamp_full()}\n\n"
         + ("\n".join(parts) if parts else "_（本文抜粋なし — summary のみ）_\n")
-        + f"\n---\n全文は `Second-Brain/Lilith/Projects/{project}/{sid}/` を参照。\n"
+        + f"\n---\n全文は `Second-Brain/Sessions/` または `grok-export-to-obsidian` を参照。\n"
     )
     sample = "\n".join(sample_bits[:3])
     return str(title), body, sample
@@ -215,52 +209,41 @@ def ensure_project_readme(project: str) -> None:
     readme = d / "README.md"
     if not readme.is_file():
         readme.write_text(
-            f"# {project}\n\nLilith project. Full sessions are in `<session-id>/`.\n"
-            f"Project names come from `~/.grok/vesper-hub.json` genres.\n",
+            f"# {project}\n\nGrok プロジェクト相当の会話要点。\n"
+            f"振り分けルール: `Scripts/config/chat_projects.json`\n",
             encoding="utf-8",
         )
 
 
 def reorganize_flat_notes() -> int:
-    """Move Lilith/*.md (not in Projects/) into a real hub project, else Uncategorized.
-
-    Keyword buckets from chat_projects.json are not folders. A note is filed by
-    its session_id in the hub genre map, or by a frontmatter project only when
-    that name is already a hub genre.
-    """
+    """Move Lilith/*.md (not in Projects/) into project folders by frontmatter/title."""
     root = VAULT / FOLDER
     if not root.is_dir():
         return 0
-    genres = load_genres()
-    real = set(genres.values()) | {UNCATEGORIZED}
     moved = 0
     for p in list(root.glob("*.md")):
         if p.name in ("README.md",):
             continue
         text = p.read_text(encoding="utf-8", errors="ignore")
-        sid = ""
-        project = ""
+        title = p.stem
+        # try frontmatter project
+        project = None
         if text.startswith("---"):
             end = text.find("\n---", 3)
             if end > 0:
-                for line in text[3:end].splitlines():
-                    if line.startswith("session_id:"):
-                        sid = line.split(":", 1)[1].strip()
-                    elif line.startswith("project:"):
+                fm = text[3:end]
+                for line in fm.splitlines():
+                    if line.startswith("project:"):
                         project = line.split(":", 1)[1].strip()
-        if sid in genres:
-            project = project_for_session(sid, genres)
-        elif safe_dir_name(project) not in real:
-            project = UNCATEGORIZED
-        else:
-            project = safe_dir_name(project)
+        if not project:
+            project, _ = classify_chat_project(title=title, summary=text[:2000], body_sample=text[:3000])
         ensure_project_readme(project)
-        dest_dir = root / PROJECTS_ROOT / project
+        dest_dir = root / PROJECTS_ROOT / safe_dir_name(project)
         dest = dest_dir / p.name
         if dest.exists():
             dest = dest_dir / f"{p.stem}-{moved}.md"
         shutil.move(str(p), str(dest))
-        print(f"MOVE {p.name} → {PROJECTS_ROOT}/{project}/")
+        print(f"MOVE {p.name} → {PROJECTS_ROOT}/{safe_dir_name(project)}/")
         moved += 1
     return moved
 
@@ -282,16 +265,11 @@ def classify_session(data: dict, chat: Path) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Full mirror: every file under ~/.grok/sessions.
-# Each session lands in Lilith/Projects/<real project>/<session-id>/.
-# The project name is the hub genre (~/.grok/vesper-hub.json), the same list
-# as Lilith's Projects sidebar. Files that are not inside a session stay in
-# Lilith/Sessions/.
+# --full-mirror: copy raw session dirs into Projects/<project>/Sessions/<rel>/
 # ---------------------------------------------------------------------------
-MIRROR_SUBDIR = "Sessions"
-MIRROR_MANIFEST = ".session_mirror_manifest.json"
-HUB_META = Path.home() / ".grok" / "vesper-hub.json"
+MIRROR_SUBDIR = "Sessions"  # Second-Brain/Lilith/Sessions/<project>/<rel>/ (sibling of Projects)
 UNCATEGORIZED = "Uncategorized"
+MIRROR_MANIFEST = ".mirror_manifest.json"
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -333,9 +311,9 @@ def _write_redacted(dst: Path, data: bytes, mtime: float) -> None:
             tmp.unlink()
 
 
-def _iter_grok_files(grok_root: Path):
-    """Every regular file under the sessions root. Symlinks are not followed."""
-    for dirpath, dirnames, filenames in os.walk(grok_root, followlinks=False):
+def _iter_session_files(session_dir: Path, grok_root: Path):
+    """Regular files under session_dir; never follows symlinks or leaves grok_root."""
+    for dirpath, dirnames, filenames in os.walk(session_dir, followlinks=False):
         d = Path(dirpath)
         dirnames[:] = sorted(n for n in dirnames if not (d / n).is_symlink())
         for name in sorted(filenames):
@@ -345,67 +323,9 @@ def _iter_grok_files(grok_root: Path):
             yield f
 
 
-def _encoded_cwd_segment(name: str) -> bool:
-    """Grok stores sessions under a percent-encoded cwd, e.g. %2Fhome%2Ftx220."""
-    return name.startswith("%2F") or name.startswith("%2f")
-
-
-def load_genres() -> dict[str, str]:
-    """Session id -> Lilith project name, from the hub genre map."""
-    try:
-        data = json.loads(HUB_META.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    raw = data.get("genres") or {}
-    out: dict[str, str] = {}
-    if not isinstance(raw, dict):
-        return out
-    for sid, name in raw.items():
-        if not isinstance(sid, str) or not isinstance(name, str):
-            continue
-        label = name.strip()
-        if not label or label == "Other":
-            label = UNCATEGORIZED
-        out[sid] = label
-    return out
-
-
-def project_for_session(sid: str, genres: dict[str, str]) -> str:
-    return safe_dir_name(genres.get(sid) or UNCATEGORIZED)
-
-
-def _session_index(grok_root: Path) -> dict[Path, str]:
-    """Resolved session directory -> session id."""
-    found: dict[Path, str] = {}
-    for summary in grok_root.rglob("summary.json"):
-        if summary.is_symlink() or not summary.is_file() or not _within(summary, grok_root):
-            continue
-        session_dir = summary.parent.resolve()
-        sid = session_dir.name
-        try:
-            data = json.loads(summary.read_text(encoding="utf-8"))
-            info = data.get("info") or {}
-            if isinstance(info, dict) and info.get("id"):
-                sid = str(info["id"])
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
-        found[session_dir] = sid
-    return found
-
-
-def _session_of(src: Path, index: dict[Path, str]) -> tuple[str, Path] | None:
-    resolved = src.resolve()
-    for session_dir, sid in index.items():
-        try:
-            return sid, resolved.relative_to(session_dir)
-        except ValueError:
-            continue
-    return None
-
-
 def mirror_root() -> Path:
-    """Lilith root. Sessions go under Projects/<real project>/, loose files under Sessions/."""
-    return (VAULT / FOLDER).resolve(strict=False)
+    """Same Lilith root as the highlights (VAULT / LILITH_FOLDER), visible top-level Sessions/."""
+    return (VAULT / FOLDER / MIRROR_SUBDIR).resolve(strict=False)
 
 
 def warn_if_no_source() -> bool:
@@ -413,187 +333,114 @@ def warn_if_no_source() -> bool:
     if not GROK.is_dir():
         print(f"WARN sessions source missing: {GROK} (nothing to mirror)")
         return False
-    if not any(_iter_grok_files(GROK)):
-        print(f"WARN sessions source empty (no files under {GROK}); nothing to mirror")
+    if next(GROK.rglob("summary.json"), None) is None:
+        print(f"WARN sessions source empty (no summary.json under {GROK}); nothing to mirror")
         return False
     return True
 
 
-def _loose_rel(src: Path, grok_root: Path) -> Path:
-    """Relative path for a file that is not inside a session directory."""
-    rel = src.resolve().relative_to(grok_root.resolve())
-    parts = rel.parts
-    if len(parts) > 1 and _encoded_cwd_segment(parts[0]):
-        return Path(*parts[1:])
-    return rel
-
-
-def _plan_mirror(grok_root: Path, genres: dict[str, str]) -> dict[str, Path]:
-    """Path relative to Lilith/ -> source file."""
-    index = _session_index(grok_root)
-    planned: dict[str, Path] = {}
-    for src in _iter_grok_files(grok_root):
-        hit = _session_of(src, index)
-        if hit:
-            sid, inside = hit
-            project = project_for_session(sid, genres)
-            key = f"{PROJECTS_ROOT}/{project}/{sid}/{inside.as_posix()}"
-        else:
-            key = f"{MIRROR_SUBDIR}/{_loose_rel(src, grok_root).as_posix()}"
-        if key in planned and planned[key].resolve() != src.resolve():
-            key = f"{MIRROR_SUBDIR}/{src.resolve().relative_to(grok_root).as_posix()}"
-        planned[key] = src
-    return planned
-
-
-def _remove_old_flat_sessions(lilith: Path, session_ids: set[str]) -> int:
-    """Remove the previous Sessions/<session-id>/ layout now that files live under Projects/."""
-    sessions_root = lilith / MIRROR_SUBDIR
-    if not sessions_root.is_dir():
-        return 0
-    removed = 0
-    for sid in sorted(session_ids):
-        child = sessions_root / sid
-        if child.is_dir() and not child.is_symlink():
-            print(f"REMOVE flat mirror {MIRROR_SUBDIR}/{sid}/")
-            shutil.rmtree(child)
-            removed += 1
-    old_manifest = sessions_root / ".mirror_manifest.json"
-    if old_manifest.is_file() and not old_manifest.is_symlink():
-        old_manifest.unlink()
-    return removed
-
-
-def _fp_record(mtime_ns: int, src_size: int, dst_size: int) -> dict[str, int]:
-    return {"src_mtime_ns": int(mtime_ns), "src_size": int(src_size), "dst_size": int(dst_size)}
-
-
-def _load_mirror_manifest(manifest: Path) -> tuple[set[str], object, dict]:
-    previous: set[str] = set()
-    prev_rules = None
-    fingerprints: dict = {}
-    if manifest.is_file() and not manifest.is_symlink():
-        try:
-            mdata = json.loads(manifest.read_text(encoding="utf-8"))
-            previous = set(mdata.get("files") or [])
-            prev_rules = mdata.get("redaction_rules")
-            raw_fp = mdata.get("fingerprints") or {}
-            if isinstance(raw_fp, dict):
-                fingerprints = raw_fp
-        except (json.JSONDecodeError, OSError, AttributeError):
-            previous = set()
-    return previous, prev_rules, fingerprints
-
-
 def mirror_sessions(days: int | None, dry_run: bool, delete: bool, report: bool = False) -> None:
-    """Copy every file under ~/.grok/sessions. `days` limits highlights only."""
-    del days  # full mirror is always the whole tree
     dest_root = mirror_root()
     grok_root = GROK.resolve()
-    genres = load_genres()
     tag = "DRY " if dry_run else ""
-    copied = unchanged = deleted = binary = errors = redacted_files = 0
+    copied = unchanged = deleted = sessions = binary = errors = redacted_files = 0
     redacted_totals: Counter = Counter()
-    planned = _plan_mirror(grok_root, genres)
-    sessions = sum(1 for key in planned if key.endswith("/summary.json"))
-    wanted = set(planned)
-    manifest = dest_root / MIRROR_MANIFEST
-    previous, prev_rules, fingerprints = _load_mirror_manifest(manifest)
-    rules_match = prev_rules == REDACTION_RULES_VERSION
-    new_fps: dict[str, dict[str, int]] = {}
-    for key in sorted(planned):
-        src = planned[key]
-        dst = (dest_root / key).resolve(strict=False)
-        if not _within(dst, dest_root):
-            print(f"SKIP unsafe target {key}")
-            wanted.discard(key)
+    seen: set[Path] = set()
+    for sid, summary_path, data in iter_sessions(days):
+        session_dir = summary_path.parent
+        if session_dir in seen or summary_path.is_symlink() or not _within(session_dir, grok_root):
             continue
-        st = src.stat()
-        fp = fingerprints.get(key) if rules_match else None
-        dst_ok = dst.is_file() and not dst.is_symlink()
-        dst_size = dst.stat().st_size if dst_ok else -1
-        if (
-            isinstance(fp, dict)
-            and int(fp.get("src_mtime_ns") or -1) == st.st_mtime_ns
-            and int(fp.get("src_size") or -1) == st.st_size
-            and dst_size == int(fp.get("dst_size") or -2)
-        ):
-            unchanged += 1
-            new_fps[key] = _fp_record(st.st_mtime_ns, st.st_size, dst_size)
+        seen.add(session_dir)
+        project, score = classify_session(data, session_dir / "chat_history.jsonl")
+        bucket = safe_dir_name(project) if score > 0 else UNCATEGORIZED
+        rel = session_dir.resolve().relative_to(grok_root)
+        target = (dest_root / bucket / rel).resolve(strict=False)
+        if rel == Path(".") or not _within(target, dest_root):
+            print(f"SKIP unsafe target for session {sid}")
             continue
-        is_critical = src.name in ("chat_history.jsonl", "summary.json", "chat_history.json")
-        if is_critical:
-            raw, stable = _stable_read_bytes(src)
-            if not stable:
-                print(f"LIVE {key} (snapshot may be partial — session still writing)")
-        else:
-            raw = src.read_bytes()
-        counts: Counter = Counter()
-        if is_text(raw):
-            try:
-                out, counts = redact_bytes(raw)
-            except Exception as exc:  # noqa: BLE001
-                print(f"WARN redaction failed, copied raw {key} ({type(exc).__name__})")
-                errors += 1
-                out = raw
-        else:
-            binary += 1
-            out = raw
-        redacted_totals.update(counts)
-        if counts:
-            redacted_files += 1
-            if report:
-                detail = ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
-                print(f"REDACT {key} {detail}")
-        new_fps[key] = _fp_record(st.st_mtime_ns, st.st_size, len(out))
-        if dst_ok and dst.read_bytes() == out:
-            unchanged += 1
-            continue
-        print(f"{tag}COPY {key}")
-        copied += 1
-        if not dry_run:
-            _write_redacted(dst, out, st.st_mtime)
-    if delete:
-        for stale in sorted(previous - wanted):
-            victim = (dest_root / stale).resolve(strict=False)
-            if not _within(victim, dest_root) or not victim.is_file() or victim.is_symlink():
+        sessions += 1
+        wanted: set[str] = set()
+        for src in _iter_session_files(session_dir, grok_root):
+            rp = src.relative_to(session_dir)
+            dst = (target / rp).resolve(strict=False)
+            if not _within(dst, target):
                 continue
-            print(f"{tag}DELETE {stale}")
-            deleted += 1
+            rel_s = f"{rel.as_posix()}/{rp.as_posix()}"
+            # Full copy has priority: every file is mirrored. UTF-8 text gets
+            # defense-in-depth redaction; binary/non-UTF-8 is copied byte-for-byte;
+            # if redaction raises, the file is copied raw and counted.
+            is_critical = src.name in ("chat_history.jsonl", "summary.json", "chat_history.json")
+            if is_critical:
+                raw, stable = _stable_read_bytes(src)
+                if not stable:
+                    print(f"LIVE {rel_s} (snapshot may be partial — session still writing)")
+            else:
+                raw = src.read_bytes()
+                stable = True
+            counts: Counter = Counter()
+            if is_text(raw):
+                try:
+                    out, counts = redact_bytes(raw)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"WARN redaction failed, copied raw {rel_s} ({type(exc).__name__})")
+                    errors += 1
+                    out = raw
+            else:
+                binary += 1
+                out = raw
+            wanted.add(rp.as_posix())
+            redacted_totals.update(counts)
+            if counts:
+                redacted_files += 1
+                detail = ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
+                if report:
+                    print(f"REDACT {rel_s} {detail}")
+            if dst.is_file() and not dst.is_symlink() and dst.read_bytes() == out:
+                unchanged += 1
+                continue
+            print(f"{tag}COPY {rel_s} -> {MIRROR_SUBDIR}/{bucket}/")
+            copied += 1
             if not dry_run:
-                victim.unlink()
-        keep = wanted
-    else:
-        keep = wanted | {p for p in previous if (dest_root / p).is_file()}
-    legacy = 0
-    if not dry_run:
-        payload = {
-            "source": str(grok_root),
-            "redaction_rules": REDACTION_RULES_VERSION,
-            "files": sorted(keep),
-            "fingerprints": {k: new_fps[k] for k in sorted(new_fps)},
-        }
-        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        old_text = ""
-        if manifest.is_file() and not manifest.is_symlink():
+                _write_redacted(dst, out, src.stat().st_mtime)
+        manifest = target / MIRROR_MANIFEST
+        previous: set[str] = set()
+        prev_rules = None
+        if manifest.is_file():
             try:
-                old_text = manifest.read_text(encoding="utf-8")
-            except OSError:
-                old_text = ""
-        if text != old_text:
-            dest_root.mkdir(parents=True, exist_ok=True)
-            manifest.write_text(text, encoding="utf-8")
-        session_ids = {key.split("/")[2] for key in wanted if key.startswith(f"{PROJECTS_ROOT}/") and key.count("/") >= 2}
-        legacy = _remove_old_flat_sessions(dest_root, session_ids)
+                mdata = json.loads(manifest.read_text(encoding="utf-8"))
+                previous = set(mdata.get("files") or [])
+                prev_rules = mdata.get("redaction_rules")
+            except (json.JSONDecodeError, OSError, AttributeError):
+                previous = set()
+        if delete:
+            # Only files this mirror previously wrote (listed in its manifest).
+            for stale in sorted(previous - wanted):
+                victim = (target / stale).resolve(strict=False)
+                if not _within(victim, target) or not victim.is_file():
+                    continue
+                print(f"{tag}DELETE {MIRROR_SUBDIR}/{bucket}/{rel.as_posix()}/{stale}")
+                deleted += 1
+                if not dry_run:
+                    victim.unlink()
+            keep = wanted
+        else:
+            keep = wanted | {p for p in previous if (target / p).is_file()}
+        if not dry_run and (keep != previous or not manifest.is_file() or prev_rules != REDACTION_RULES_VERSION):
+            target.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(
+                json.dumps({"session_id": sid, "source": rel.as_posix(),
+                            "redaction_rules": REDACTION_RULES_VERSION, "files": sorted(keep)},
+                           ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
     print(
-        f"SUMMARY kind=chat_mirror added={copied} skipped={unchanged} "
-        f"sessions={sessions} files={len(wanted)} deleted={deleted} legacy_buckets={legacy} "
-        f"binary_raw={binary} redaction_errors_copied_raw={errors} dry_run={int(dry_run)}"
+        f"SUMMARY kind=chat_mirror sessions={sessions} copied={copied} "
+        f"unchanged={unchanged} deleted={deleted} binary_raw={binary} redaction_errors_copied_raw={errors} dry_run={int(dry_run)}"
     )
     by_type = ",".join(f"{k}={v}" for k, v in sorted(redacted_totals.items())) or "none"
     print(f"REDACTION rules={REDACTION_RULES_VERSION} files_redacted={redacted_files} by_type={by_type}")
     print(f"MIRROR {'(dry-run) ' if dry_run else ''}dest={dest_root} source={GROK} "
-          f"sessions={sessions} files={len(wanted)} copied={copied} unchanged={unchanged}")
+          f"sessions={sessions} copied={copied} unchanged={unchanged}")
 
 
 def sync_lilith_web() -> None:
@@ -610,7 +457,7 @@ def sync_lilith_web() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Default: highlight notes + a full copy of ~/.grok/sessions into Lilith/Projects/<project>/.")
+        description="Default: highlight notes + full raw mirror into Lilith/Sessions/<project>/.")
     ap.add_argument("--limit", type=int, default=15)
     ap.add_argument("--days", type=int, default=None)
     ap.add_argument("--force", action="store_true")
@@ -618,7 +465,7 @@ def main() -> None:
     ap.add_argument("--highlights-only", action="store_true",
                     help="Old behavior: highlight notes only, no mirror")
     ap.add_argument("--full-mirror", action="store_true",
-                    help="Mirror only: copy every session into Lilith/Projects/<real project>/<session-id>/ (no highlights)")
+                    help="Mirror only: copy raw session dirs into Lilith/Sessions/<project>/ (no highlights)")
     ap.add_argument("--dry-run", action="store_true", help="With --full-mirror: print actions, write nothing")
     ap.add_argument("--mirror-delete", action="store_true",
                     help="Remove mirrored files no longer in the source "
@@ -643,8 +490,7 @@ def main() -> None:
     if args.highlights_only or args.reorganize:
         run_highlights(args)
         return
-    # Default: highlights, local session mirror, then Lilith's grok.com chats.
-    # The Pit Chat button and All button both land here.
+    # Default: highlights exactly as before, then the full mirror.
     has_source = warn_if_no_source()
     run_highlights(args)
     if has_source:
@@ -659,15 +505,15 @@ def run_highlights(args: argparse.Namespace) -> None:
         index.write_text(
             "# Lilith (Grok chat)\n\n"
             f"Path: `{FOLDER}/`\n\n"
-            "Grok sessions, organized by hub project:\n\n"
-            f"- `{PROJECTS_ROOT}/Infra & Environment/`\n"
-            f"- `{PROJECTS_ROOT}/Security/`\n"
-            f"- `{PROJECTS_ROOT}/Freelance/`\n"
-            f"- `{PROJECTS_ROOT}/Trade Bot/`\n"
-            f"- `{PROJECTS_ROOT}/Information Dominance/`\n"
-            f"- `{PROJECTS_ROOT}/Game Dev/`\n"
-            f"- `{PROJECTS_ROOT}/Uncategorized/`\n\n"
-            "Names: `~/.grok/vesper-hub.json` genres.\n",
+            "Grok conversation notes, organized by project:\n\n"
+            f"- `{PROJECTS_ROOT}/Web-Dev/`\n"
+            f"- `{PROJECTS_ROOT}/Grok-Full-Fusion/`\n"
+            f"- `{PROJECTS_ROOT}/X-Research-Chat/`\n"
+            f"- `{PROJECTS_ROOT}/Extreme-Consciousness/`\n"
+            f"- `{PROJECTS_ROOT}/Trading/`\n"
+            f"- `{PROJECTS_ROOT}/Full-Remote-Mission/`\n"
+            f"- `{PROJECTS_ROOT}/その他/`\n\n"
+            "Routing: `Scripts/config/chat_projects.json`\n",
             encoding="utf-8",
         )
 
@@ -684,7 +530,6 @@ def run_highlights(args: argparse.Namespace) -> None:
     reorganized = reorganize_flat_notes()
 
     state = load_state()
-    genres = load_genres()
     added = skipped = 0
     for sid, summary_path, data in iter_sessions(args.days):
         file_mtime = summary_path.stat().st_mtime
@@ -698,8 +543,7 @@ def run_highlights(args: argparse.Namespace) -> None:
             skipped += 1
             continue
 
-        project = project_for_session(sid, genres)
-        score = 1 if sid in genres else 0
+        project, score = classify_session(data, chat)
         ensure_project_readme(project)
 
         title, body, _ = build_highlight(sid, data, chat, project)

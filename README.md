@@ -78,12 +78,15 @@ python3 chat_sync_sessions.py --full-mirror      # mirror only (add --dry-run to
 python3 chat_sync_sessions.py --mirror-delete    # also prune files the mirror wrote earlier
 ```
 
-Every file under `~/.grok/sessions` is copied. Each session directory goes to **`Second-Brain/Lilith/Projects/<project>/<session-id>/`**.
-`<project>` is the hub genre in `~/.grok/vesper-hub.json` (Infra & Environment, Security, Freelance, Trade Bot, Information Dominance, Game Dev, Uncategorized). It is not the keyword bucket in `chat_projects.json`.
-Files that are not inside a session (`prompt_history.jsonl`, `sandbox-events.jsonl`, `session_search.sqlite`) stay in `Lilith/Sessions/`.
-The run ends with `MIRROR dest=<absolute path> source=<sessions dir> sessions=N files=N copied=N unchanged=N`, and warns if the sessions dir is missing or empty.
-Unchanged files are skipped by source size and mtime, symlinks are not followed, nothing is written outside `Lilith/`, and nothing is deleted without
-`--mirror-delete` (manifest-tracked files only). A previous flat copy at `Lilith/Sessions/<session-id>/` is removed after the files land under `Projects/<project>/<session-id>/`. Run with `python3` (the script is not marked executable).
+Each session directory under `~/.grok/sessions` is copied to **`Second-Brain/Lilith/Sessions/<project>/<original relative path>/`**,
+a top-level folder next to `Lilith/Projects/`. The project uses the same classification as the highlights; unclassified sessions go to `Sessions/Uncategorized/`.
+The run ends with `MIRROR dest=<absolute path> source=<sessions dir> copied=N unchanged=N`, and warns if the sessions dir is missing or empty.
+Unchanged files are skipped, symlinks are not followed, nothing is written outside `Lilith/Sessions/`, and nothing is deleted without
+`--mirror-delete` (manifest-tracked files only). Run with `python3` (or `./chat_sync_sessions.py` once the file mode is 100755).
+
+Older mirror output under `Lilith/Projects/<project>/Sessions/` (from the first B-004 version) is not moved or deleted; remove it by hand if you like.
+
+Routing rules: `config/chat_projects.json` and `config/x_categories.json` ship generic examples. Keep your own rules in `config/chat_projects.local.json` / `config/x_categories.local.json` (gitignored); a `.local.json` file overrides the committed one.
 
 The same default run also pulls Lilith's grok.com project chats (one Markdown file per conversation). It uses whichever Firefox profile is already logged into grok.com. No login is a clean skip (`added=0`), not a failed sync. A later run downloads a conversation only when its `modifyTime` changed or the note is missing.
 
@@ -99,7 +102,7 @@ and counted in the summary (`redaction_errors_copied_raw=`). Writes are atomic a
 `--redaction-report` adds per-file counts.
 
 > **The vault is local and private.** Mirrored sessions can still contain secrets that the regex pass misses (and raw copies of binary files).
-> Never publish, share, or push the vault, or `Lilith/Projects/*/Sessions/`, to any public place.
+> Never publish, share, or push the vault, or `Lilith/Sessions/`, to any public place.
 
 ---
 

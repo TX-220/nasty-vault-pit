@@ -299,7 +299,7 @@ class Launcher(tk.Tk):
             ).pack(pady=(12, 2))
         tk.Label(
             top,
-            text="X / Chat / GitHub  ·  cosmic vault pit  ·  ★ = auto-fetch  ·  no always-on watch",
+            text="X / Chat / GitHub  ·  Nasty Ingest Pit  ·  ★ = auto-fetch  ·  no always-on watch",
             font=("Sans", 9),
             fg=C["sub"],
             bg=C["bg"],
