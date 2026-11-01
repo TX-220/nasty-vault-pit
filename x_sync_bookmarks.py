@@ -577,7 +577,7 @@ def main() -> None:
         "- `Tech-Tools/`\n"
         "- `親分関連/`\n"
         "- `Obsidian-Info/`\n"
-        "- `TradeBot-Trading/`\n"
+        "- `Trading/`\n"
         "- `Consciousness-Spirit/`\n"
         "- `その他/`\n\n"
         "ルール編集: `Scripts/config/x_categories.json`\n"
